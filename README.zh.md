@@ -108,7 +108,7 @@ remotelab restart chat
 3. `docs/README.md` —— 文档分层和同步规则
 4. `notes/current/core-domain-contract.md` —— 当前领域模型 / 重构基线
 5. `notes/README.md` —— 笔记分桶和清理规则
-6. `docs/setup.md`、`docs/external-message-protocol.md`、`docs/creating-apps.md` 这类专题文档
+6. `docs/setup.md`、`docs/external-message-protocol.md`、`docs/creating-apps.md`、`docs/feishu-bot-setup.md` 这类专题文档
 
 ---
 

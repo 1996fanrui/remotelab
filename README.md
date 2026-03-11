@@ -108,7 +108,7 @@ If you are refreshing yourself after several architecture iterations, use this r
 3. `docs/README.md` — documentation taxonomy and sync rules
 4. `notes/current/core-domain-contract.md` — current domain/refactor baseline
 5. `notes/README.md` — note buckets and cleanup policy
-6. focused guides such as `docs/setup.md`, `docs/external-message-protocol.md`, and `docs/creating-apps.md`
+6. focused guides such as `docs/setup.md`, `docs/external-message-protocol.md`, `docs/creating-apps.md`, and `docs/feishu-bot-setup.md`
 
 ---
 

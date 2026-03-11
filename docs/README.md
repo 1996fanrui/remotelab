@@ -39,6 +39,7 @@ When the system changes, update the matching surface instead of letting discussi
 ### Focused Integrations
 
 - `cloudflare-email-worker.md` — email worker deployment notes
+- `feishu-bot-setup.md` — shareable operator + console setup flow for the RemoteLab Feishu connector
 - `github-auto-triage.md` — GitHub intake/auto-reply workflow
 
 ## What Lives In `notes/`
