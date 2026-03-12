@@ -181,18 +181,12 @@ async function saveMetaUnlocked(sessionId, meta) {
 }
 
 async function loadContext(sessionId) {
-  if (contextCache.has(sessionId)) {
-    return clone(contextCache.get(sessionId));
-  }
   const context = await readJson(sessionContextPath(sessionId), null);
   contextCache.set(sessionId, context);
   return clone(context);
 }
 
 async function loadForkContext(sessionId) {
-  if (forkContextCache.has(sessionId)) {
-    return clone(forkContextCache.get(sessionId));
-  }
   const context = await readJson(sessionForkContextPath(sessionId), null);
   forkContextCache.set(sessionId, context);
   return clone(context);
@@ -518,6 +512,12 @@ export async function setContextHead(sessionId, context = {}) {
     inputTokens: Number.isInteger(context.inputTokens) ? context.inputTokens : null,
     updatedAt: context.updatedAt || new Date().toISOString(),
     source: context.source || 'manual',
+    ...(typeof context.toolIndex === 'string' ? { toolIndex: context.toolIndex.trim() } : {}),
+    ...(Number.isInteger(context.barrierSeq) ? { barrierSeq: context.barrierSeq } : {}),
+    ...(Number.isInteger(context.handoffSeq) ? { handoffSeq: context.handoffSeq } : {}),
+    ...(typeof context.compactionSessionId === 'string' && context.compactionSessionId.trim()
+      ? { compactionSessionId: context.compactionSessionId.trim() }
+      : {}),
   }));
 }
 

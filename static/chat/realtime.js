@@ -141,7 +141,9 @@ async function dispatchAction(msg) {
       case "send": {
         const pending = getPendingMessage();
         const requestId = msg.requestId || pending?.requestId || createRequestId();
-        savePendingMessage(msg.text, requestId);
+        if (!pending || pending.requestId !== requestId || pending.text !== msg.text) {
+          savePendingMessage(msg.text, requestId);
+        }
         const data = await fetchJsonOrRedirect(`/api/sessions/${encodeURIComponent(currentSessionId)}/messages`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -158,6 +160,8 @@ async function dispatchAction(msg) {
         if (data?.queued) {
           clearPendingMessage();
           clearOptimisticMessage();
+        } else {
+          setPendingMessageDeliveryState(currentSessionId, "accepted");
         }
         await refreshCurrentSession();
         return true;
@@ -276,8 +280,9 @@ function updateStatus(connState, sessState, renameState, archived = false) {
     sendBtn.title = "Send";
     return;
   }
-  sessionStatus = sessState;
   const isRunning = sessState === "running";
+  const isBusy = isRunning || session?.pendingCompact === true;
+  sessionStatus = isBusy ? "running" : sessState;
   const visualStatus = getSessionVisualStatus({
     ...(session || {}),
     id: session?.id || currentSessionId,
@@ -310,12 +315,12 @@ function updateStatus(connState, sessState, renameState, archived = false) {
   msgInput.disabled = !hasSession || archived;
   msgInput.placeholder = archived
     ? "Archived session — restore to continue"
-    : isRunning
+    : isBusy
       ? "Queue follow-up..."
       : "Message...";
   sendBtn.style.display = "";
   sendBtn.disabled = !hasSession || archived;
-  sendBtn.title = isRunning ? "Queue follow-up" : "Send";
+  sendBtn.title = isBusy ? "Queue follow-up" : "Send";
   cancelBtn.style.display = isRunning && hasSession ? "flex" : "none";
   imgBtn.disabled = !hasSession || archived;
   inlineToolSelect.disabled = visitorMode || archived;

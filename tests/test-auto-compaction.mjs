@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from 'assert/strict';
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
@@ -10,6 +10,16 @@ const tempHome = mkdtempSync(join(tmpdir(), 'remotelab-auto-compact-'));
 const tempBin = join(tempHome, 'bin');
 const configDir = join(tempHome, '.config', 'remotelab');
 const codexSessionsDir = join(tempHome, '.codex', 'sessions', '2026', '03', '10');
+const compactionWorkerText = JSON.stringify(
+  '<summary>Carry forward only the compacted continuation summary.</summary>\n\n'
+  + '<handoff># Auto Compress\n\n'
+  + '## Kept in live context\n'
+  + '- Carry forward only the compacted continuation summary.\n\n'
+  + '## Left out of live context\n'
+  + '- Older messages above the marker are no longer in live context.\n\n'
+  + '## Continue from here\n'
+  + '- Keep going from the fresh handoff.</handoff>'
+);
 
 mkdirSync(tempBin, { recursive: true });
 mkdirSync(configDir, { recursive: true });
@@ -38,7 +48,7 @@ console.log(JSON.stringify({
   item: {
     type: 'agent_message',
     text: isCompaction
-      ? '<summary>Carry forward only the compacted continuation summary.</summary>'
+      ? ${compactionWorkerText}
       : 'Finished the requested task.',
   },
 }));
@@ -122,10 +132,16 @@ const {
   getHistory,
   getSession,
   killAll,
+  listSessions,
   sendMessage,
 } = sessionManager;
 
 const { getContextHead } = history;
+
+function readPersistedContextHead(sessionId) {
+  const raw = readFileSync(join(configDir, 'chat-history', sessionId, 'context.json'), 'utf8');
+  return JSON.parse(raw);
+}
 
 async function waitFor(predicate, description, timeoutMs = 5000) {
   const start = Date.now();
@@ -149,11 +165,11 @@ try {
   });
 
   await waitFor(
-    async () => (await getContextHead(overflowSession.id))?.source === 'context_compaction',
+    async () => (await getSession(overflowSession.id))?.contextMode === 'summary',
     'overflow session should auto-compact after exceeding the context window',
   );
 
-  const overflowContextHead = await getContextHead(overflowSession.id);
+  const overflowContextHead = readPersistedContextHead(overflowSession.id);
   assert.match(
     overflowContextHead?.summary || '',
     /Carry forward only the compacted continuation summary\./,
@@ -166,13 +182,28 @@ try {
     'overflow session should record the automatic fallback compaction status',
   );
   assert.ok(
-    overflowHistory.some((event) => event.type === 'status' && /Context compacted — next message will resume from summary/.test(event.content || '')),
+    overflowHistory.some((event) => event.type === 'context_barrier' && /no longer in the model's live context/i.test(event.content || '')),
+    'overflow session should insert a visible context barrier after auto-compaction',
+  );
+  assert.ok(
+    overflowHistory.some((event) => event.type === 'message' && event.role === 'assistant' && /# Auto Compress/.test(event.content || '')),
+    'overflow session should append a visible auto-compress handoff message',
+  );
+  assert.ok(
+    overflowHistory.some((event) => event.type === 'status' && /Auto Compress finished/.test(event.content || '')),
     'overflow session should record the successful compaction completion status',
   );
 
   await waitFor(
     async () => (await getSession(overflowSession.id))?.status === 'idle',
     'overflow session should settle back to idle after compaction',
+  );
+
+  const visibleSessionsAfterOverflow = await listSessions({ includeArchived: true });
+  assert.equal(
+    visibleSessionsAfterOverflow.filter((session) => session.id === overflowSession.id).length,
+    1,
+    'overflow session should still be listed exactly once after auto-compaction',
   );
 
   const exactSession = await createSession(tempHome, 'fake-codex', 'Exact Limit', {

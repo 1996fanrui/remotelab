@@ -604,7 +604,14 @@ RemoteLab already contains two explicit context-management mechanisms:
 - **Compact**: ask the model to summarize the session into a continuation summary and store it in `context.json`
 - **Drop tools**: keep message transcript but strip past tool-result context from future continuation state
 
-These are part of the current practical architecture for long-lived sessions.
+Current auto-compaction now runs through a hidden companion session per parent session:
+
+- the visible session keeps its full history for the user
+- a hidden compactor session generates the fresh continuation package
+- the visible session inserts a context barrier marker plus a user-visible handoff message
+- `context.json` becomes the authoritative live continuation head for future turns
+
+This keeps continuity visible to the user while making it explicit that older messages above the barrier are no longer in live context.
 
 ### 9.6 Web push flow
 

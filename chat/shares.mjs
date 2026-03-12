@@ -101,6 +101,7 @@ async function sanitizeEvent(event) {
       };
     case 'reasoning':
     case 'status':
+    case 'context_barrier':
       return {
         type: event.type,
         id: event.id,

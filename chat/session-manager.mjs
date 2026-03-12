@@ -74,6 +74,16 @@ const INTERRUPTED_RESUME_PROMPT =
   'Please continue where you left off. The previous turn was interrupted by a RemoteLab server restart. '
   + 'Pick up from the last unfinished task without repeating completed work unless necessary.';
 
+const INTERNAL_SESSION_ROLE_CONTEXT_COMPACTOR = 'context_compactor';
+const AUTO_COMPACT_MARKER_TEXT = 'Older messages above this marker are no longer in the model\'s live context. They remain visible in the transcript, but only the compressed handoff and newer messages below are loaded for continued work.';
+const CONTEXT_COMPACTOR_SYSTEM_PROMPT = [
+  'You are RemoteLab\'s hidden context compactor for a user-facing session.',
+  'Your job is to condense older session context into a compact continuation package.',
+  'Preserve the task objective, accepted decisions, constraints, completed work, current state, open questions, and next steps.',
+  'Do not include raw tool dumps unless a tiny excerpt is essential.',
+  'Be explicit about what is no longer in live context and what the next worker should rely on.',
+].join('\n');
+
 const DEFAULT_AUTO_COMPACT_CONTEXT_WINDOW_PERCENT = 100;
 const FOLLOW_UP_FLUSH_DELAY_MS = 1500;
 const MAX_RECENT_FOLLOW_UP_REQUEST_IDS = 100;
@@ -131,33 +141,6 @@ function getAutoCompactStatusText(run) {
   }
   return 'Live context overflowed — compacting conversation…';
 }
-
-const COMPACT_PROMPT = [
-  'Please compress this entire session into a continuation summary for the same AI worker.',
-  '',
-  'Goal:',
-  '- This summary will replace the prior live context for future turns.',
-  '- Keep only durable facts needed to continue the work well.',
-  '',
-  'Include:',
-  '1. Main objective',
-  '2. Confirmed user constraints and preferences',
-  '3. Work completed',
-  '4. Current state of code / files / system / data',
-  '5. Important decisions made',
-  '6. Open issues / risks / unknowns',
-  '7. Exact next steps',
-  '8. Critical references that must not be lost',
-  '',
-  'Rules:',
-  '- Do not include chatter, repetition, or full raw tool output.',
-  '- Summarize large outputs into conclusions.',
-  '- If something is uncertain, mark it clearly.',
-  '- Write for the next model turn, not for the end user.',
-  '- Keep it dense and operational.',
-  '',
-  'Wrap the final answer in <summary>...</summary>.',
-].join('\n');
 
 const liveSessions = new Map();
 const observedRuns = new Map();
@@ -761,6 +744,7 @@ async function enrichSessionMeta(meta) {
     status: await getPersistedStatus(meta),
     recoverable: !!meta.activeRun && !!(meta.claudeSessionId || meta.codexThreadId),
     queuedMessageCount: getFollowUpQueueCount(meta),
+    pendingCompact: live?.pendingCompact === true,
     renameState: live?.renameState || undefined,
     renameError: live?.renameError || undefined,
   };
@@ -847,7 +831,7 @@ function broadcastSessionInvalidation(sessionId) {
     const authSession = client._authSession;
     if (!authSession) return false;
     if (authSession.role === 'owner') {
-      return !session?.visitorId;
+      return !session?.visitorId && shouldExposeSession(session);
     }
     if (authSession.role === 'visitor') {
       return authSession.sessionId === sessionId;
@@ -982,18 +966,348 @@ async function getOrPrepareForkContext(sessionId, snapshot, contextHead) {
   return null;
 }
 
-async function buildPrompt(sessionId, session, text, previousTool, effectiveTool, snapshot = null) {
-  const hasResume = !!session.claudeSessionId || !!session.codexThreadId;
-  let continuationContext = '';
+function clipCompactionSection(value, maxChars = 12000) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text || text.length <= maxChars) return text;
+  const headChars = Math.max(1, Math.floor(maxChars * 0.6));
+  const tailChars = Math.max(1, maxChars - headChars);
+  return `${text.slice(0, headChars).trimEnd()}\n[... truncated by RemoteLab ...]\n${text.slice(-tailChars).trimStart()}`;
+}
 
-  if (!hasResume) {
+function extractTaggedBlock(content, tagName) {
+  const text = typeof content === 'string' ? content : '';
+  if (!text || !tagName) return '';
+  const match = text.match(new RegExp(`<${tagName}>([\\s\\S]*?)<\/${tagName}>`, 'i'));
+  return (match ? match[1] : '').trim();
+}
+
+function parseCompactionWorkerOutput(content) {
+  return {
+    summary: extractTaggedBlock(content, 'summary'),
+    handoff: extractTaggedBlock(content, 'handoff'),
+  };
+}
+
+function buildFallbackCompactionHandoff(summary, toolIndex) {
+  const parts = [
+    '# Auto Compress',
+    '',
+    '## Kept in live context',
+    '- RemoteLab carried forward a compressed continuation summary for the task.',
+  ];
+
+  const trimmedSummary = clipCompactionSection(summary, 3000);
+  if (trimmedSummary) {
+    parts.push('', trimmedSummary);
+  }
+
+  parts.push('', '## Left out of live context', '- Older messages above the marker are no longer loaded into the model\'s live context.');
+  if (toolIndex) {
+    parts.push('- Earlier tool activity remains in session history and is summarized as compact retrieval hints.');
+  }
+  parts.push('', '## Continue from here', '- Use the carried-forward summary plus the new messages below this marker.');
+  return parts.join('\n');
+}
+
+function buildContextCompactionPrompt({ session, existingSummary, conversationBody, toolIndex, automatic = false }) {
+  const appInstructions = clipCompactionSection(session?.systemPrompt || '', 6000);
+  const priorSummary = clipCompactionSection(existingSummary || '', 12000);
+  const conversationSlice = clipCompactionSection(conversationBody || '', 18000);
+  const toolActivity = clipCompactionSection(toolIndex || '', 10000);
+
+  return [
+    'Please compress this entire session into a continuation summary for the same AI worker.',
+    '',
+    'You are operating inside RemoteLab\'s hidden compaction worker for a parent session.',
+    `Compaction trigger: ${automatic ? 'automatic auto-compress' : 'manual compact request'}`,
+    '',
+    'Goal:',
+    '- Replace older live context with a fresh continuation package.',
+    '- Preserve only what the next worker turn truly needs.',
+    '- Treat older tool activity as retrievable hints, not as live prompt material.',
+    '',
+    'Rules:',
+    '- Use only the supplied session material; do not rely on prior thread state.',
+    '- Do not call tools unless absolutely necessary.',
+    '- Do not include full raw tool output.',
+    '- Mark uncertainty clearly.',
+    '- The user-visible handoff must explicitly say that older messages above the marker are no longer in live context.',
+    '',
+    'Return exactly two tagged blocks:',
+    '<summary>',
+    'Dense operational continuation state for the next worker turn.',
+    'Include the main objective, confirmed constraints, completed work, current code/system state, open questions, next steps, and critical references.',
+    '</summary>',
+    '',
+    '<handoff>',
+    '# Auto Compress',
+    '## Kept in live context',
+    '- ...',
+    '## Left out of live context',
+    '- ...',
+    '## Continue from here',
+    '- ...',
+    '</handoff>',
+    '',
+    'Parent session app instructions:',
+    appInstructions || '[none]',
+    '',
+    'Previously carried summary:',
+    priorSummary || '[none]',
+    '',
+    'New conversation slice since the last compaction:',
+    conversationSlice || '[no new conversation messages]',
+    '',
+    'Earlier tool activity index:',
+    toolActivity || '[no earlier tool activity recorded]',
+  ].join('\n');
+}
+
+function normalizeCompactionText(value) {
+  return String(value ?? '').replace(/\r\n/g, '\n').trim();
+}
+
+function clipCompactionEventText(value, maxChars = 4000) {
+  const text = normalizeCompactionText(value);
+  if (!text) return '';
+  if (text.length <= maxChars) return text;
+  const headChars = Math.max(1, Math.floor(maxChars * 0.6));
+  const tailChars = Math.max(1, maxChars - headChars);
+  return `${text.slice(0, headChars).trimEnd()}\n[... truncated by RemoteLab ...]\n${text.slice(-tailChars).trimStart()}`;
+}
+
+function formatCompactionImages(images) {
+  const refs = (images || [])
+    .map((img) => img?.filename || '')
+    .filter(Boolean);
+  if (refs.length === 0) return '';
+  return `[Attached images: ${refs.join(', ')}]`;
+}
+
+function formatCompactionMessage(evt) {
+  const label = evt.role === 'user' ? 'User' : 'Assistant';
+  const parts = [];
+  const imageLine = formatCompactionImages(evt.images);
+  if (imageLine) parts.push(imageLine);
+  const content = clipCompactionEventText(evt.content);
+  if (content) parts.push(content);
+  if (parts.length === 0) return '';
+  return `[${label}]\n${parts.join('\n')}`;
+}
+
+function formatCompactionTemplateContext(evt) {
+  const content = normalizeCompactionText(evt.content);
+  if (!content) return '';
+  const name = normalizeCompactionText(evt.templateName) || 'template';
+  return `[Applied template context: ${name}]\n${content}`;
+}
+
+function formatCompactionStatus(evt) {
+  const content = clipCompactionEventText(evt.content, 1000);
+  if (!content) return '';
+  if (!/^error:/i.test(content) && !/interrupted/i.test(content)) return '';
+  return `[System status]\n${content}`;
+}
+
+function prepareConversationOnlyContinuationBody(events) {
+  const segments = (events || [])
+    .map((evt) => {
+      if (!evt || !evt.type) return '';
+      if (evt.type === 'message') return formatCompactionMessage(evt);
+      if (evt.type === 'template_context') return formatCompactionTemplateContext(evt);
+      if (evt.type === 'status') return formatCompactionStatus(evt);
+      return '';
+    })
+    .filter(Boolean);
+
+  if (segments.length === 0) return '';
+  return clipCompactionSection(segments.join('\n\n'), 24000);
+}
+
+function buildToolActivityIndex(events) {
+  const toolCounts = new Map();
+  const recentCommands = [];
+  const touchedFiles = [];
+  const notableFailures = [];
+
+  const pushRecentUnique = (entries, key, value, maxEntries) => {
+    if (!key || !value) return;
+    const existingIndex = entries.findIndex((entry) => entry.key === key);
+    if (existingIndex !== -1) {
+      entries.splice(existingIndex, 1);
+    }
+    entries.push({ key, value });
+    if (entries.length > maxEntries) {
+      entries.shift();
+    }
+  };
+
+  for (const evt of events || []) {
+    if (!evt || !evt.type) continue;
+    if (evt.type === 'tool_use') {
+      const toolName = normalizeCompactionText(evt.toolName) || 'tool';
+      toolCounts.set(toolName, (toolCounts.get(toolName) || 0) + 1);
+      const toolInput = clipCompactionEventText(evt.toolInput, 240);
+      if (toolInput) {
+        pushRecentUnique(recentCommands, `${toolName}:${toolInput}`, `- ${toolName}: ${toolInput.replace(/\n/g, ' ↵ ')}`, 8);
+      }
+      continue;
+    }
+    if (evt.type === 'file_change') {
+      const filePath = normalizeCompactionText(evt.filePath);
+      if (!filePath) continue;
+      const changeType = normalizeCompactionText(evt.changeType) || 'updated';
+      pushRecentUnique(touchedFiles, `${changeType}:${filePath}`, `- ${filePath} (${changeType})`, 12);
+      continue;
+    }
+    if (evt.type === 'tool_result') {
+      const exitCode = evt.exitCode;
+      if (exitCode === undefined || exitCode === 0) continue;
+      const toolName = normalizeCompactionText(evt.toolName) || 'tool';
+      const output = clipCompactionEventText(evt.output, 320);
+      pushRecentUnique(notableFailures, `${toolName}:${exitCode}:${output}`, `- ${toolName} exit ${exitCode}: ${output.replace(/\n/g, ' ↵ ')}`, 6);
+    }
+  }
+
+  const toolSummary = [...toolCounts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .map(([toolName, count]) => `${toolName} ×${count}`)
+    .join(', ');
+
+  const lines = [];
+  if (toolSummary) lines.push(`Tools used: ${toolSummary}`);
+  if (recentCommands.length > 0) {
+    lines.push('Recent tool calls:');
+    lines.push(...recentCommands.map((entry) => entry.value));
+  }
+  if (touchedFiles.length > 0) {
+    lines.push('Touched files:');
+    lines.push(...touchedFiles.map((entry) => entry.value));
+  }
+  if (notableFailures.length > 0) {
+    lines.push('Notable tool failures:');
+    lines.push(...notableFailures.map((entry) => entry.value));
+  }
+
+  if (lines.length === 0) return '';
+  return clipCompactionSection(lines.join('\n'), 12000);
+}
+
+function createContextBarrierEvent(content, extra = {}) {
+  return {
+    type: 'context_barrier',
+    role: 'system',
+    id: `evt_${randomBytes(8).toString('hex')}`,
+    timestamp: Date.now(),
+    content,
+    ...extra,
+  };
+}
+
+async function buildCompactionSourcePayload(sessionId, session, { uptoSeq = 0 } = {}) {
+  const [contextHead, history] = await Promise.all([
+    getContextHead(sessionId),
+    loadHistory(sessionId, { includeBodies: true }),
+  ]);
+  const targetSeq = uptoSeq > 0 ? uptoSeq : (history.at(-1)?.seq || 0);
+  const boundedHistory = history.filter((event) => (event?.seq || 0) <= targetSeq);
+  const activeFromSeq = Number.isInteger(contextHead?.activeFromSeq) ? contextHead.activeFromSeq : 0;
+  const sliceEvents = boundedHistory.filter((event) => (event?.seq || 0) > activeFromSeq);
+  const existingSummary = typeof contextHead?.summary === 'string' ? contextHead.summary.trim() : '';
+  const conversationBody = prepareConversationOnlyContinuationBody(sliceEvents);
+  const toolIndex = buildToolActivityIndex(boundedHistory);
+
+  if (!existingSummary && !conversationBody && !toolIndex) {
+    return null;
+  }
+
+  return {
+    targetSeq,
+    existingSummary,
+    conversationBody,
+    toolIndex,
+  };
+}
+
+async function ensureContextCompactorSession(sourceSessionId, session, run) {
+  const existingId = typeof session?.compactionSessionId === 'string' ? session.compactionSessionId.trim() : '';
+  if (existingId) {
+    const existing = await getSession(existingId);
+    if (existing) {
+      if ((run?.tool || session.tool) && existing.tool !== (run?.tool || session.tool)) {
+        await mutateSessionMeta(existing.id, (draft) => {
+          draft.tool = run?.tool || session.tool;
+          draft.updatedAt = nowIso();
+          return true;
+        });
+      }
+      return existing;
+    }
+  }
+
+  const metas = await loadSessionsMeta();
+  const linked = metas.find((meta) => meta.compactsSessionId === sourceSessionId && isContextCompactorSession(meta));
+  if (linked) {
+    await mutateSessionMeta(sourceSessionId, (draft) => {
+      if (draft.compactionSessionId === linked.id) return false;
+      draft.compactionSessionId = linked.id;
+      draft.updatedAt = nowIso();
+      return true;
+    });
+    return enrichSessionMeta(linked);
+  }
+
+  const created = await createSession(session.folder, run?.tool || session.tool, `auto-compress - ${session.name || 'session'}`, {
+    appId: session.appId || '',
+    appName: session.appName || '',
+    systemPrompt: CONTEXT_COMPACTOR_SYSTEM_PROMPT,
+    internalRole: INTERNAL_SESSION_ROLE_CONTEXT_COMPACTOR,
+    compactsSessionId: sourceSessionId,
+    rootSessionId: session.rootSessionId || session.id,
+  });
+  if (!created) return null;
+
+  await mutateSessionMeta(sourceSessionId, (draft) => {
+    if (draft.compactionSessionId === created.id) return false;
+    draft.compactionSessionId = created.id;
+    draft.updatedAt = nowIso();
+    return true;
+  });
+
+  return created;
+}
+
+async function findLatestAssistantMessageForRun(sessionId, runId) {
+  const events = await loadHistory(sessionId, { includeBodies: true });
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.type !== 'message' || event.role !== 'assistant') continue;
+    if (runId && event.runId !== runId) continue;
+    return event;
+  }
+  return null;
+}
+
+async function buildPrompt(sessionId, session, text, previousTool, effectiveTool, snapshot = null, options = {}) {
+  const hasResume = !options.freshThread && (!!session.claudeSessionId || !!session.codexThreadId);
+  let continuationContext = '';
+  let contextToolIndex = '';
+
+  if (!hasResume && options.skipSessionContinuation !== true) {
     const contextHead = await getContextHead(sessionId);
+    contextToolIndex = typeof contextHead?.toolIndex === 'string' ? contextHead.toolIndex.trim() : '';
     const prepared = await getOrPrepareForkContext(
       sessionId,
       snapshot || await getHistorySnapshot(sessionId),
       contextHead,
     );
     continuationContext = buildPreparedContinuationContext(prepared, previousTool, effectiveTool);
+  }
+
+  if (contextToolIndex) {
+    continuationContext = continuationContext
+      ? `${continuationContext}\n\n---\n\n[Earlier tool activity index]\n\n${contextToolIndex}`
+      : `[Earlier tool activity index]\n\n${contextToolIndex}`;
   }
 
   let actualText = text;
@@ -1099,23 +1413,46 @@ function launchEarlySessionLabelSuggestion(sessionId, sessionMeta) {
 async function queueContextCompaction(sessionId, session, run, { automatic = false } = {}) {
   const live = ensureLiveSession(sessionId);
   if (live.pendingCompact) return false;
+
+  const snapshot = await getHistorySnapshot(sessionId);
+  const compactionSource = await buildCompactionSourcePayload(sessionId, session, {
+    uptoSeq: snapshot.latestSeq,
+  });
+  if (!compactionSource) return false;
+
+  const compactorSession = await ensureContextCompactorSession(sessionId, session, run);
+  if (!compactorSession) return false;
+
   live.pendingCompact = true;
 
   const statusText = automatic
     ? getAutoCompactStatusText(run)
-    : 'Compacting session context…';
+    : 'Auto Compress is condensing older context…';
   const compactQueuedEvent = statusEvent(statusText);
   await appendEvent(sessionId, compactQueuedEvent);
   broadcastSessionInvalidation(sessionId);
 
   try {
-    await sendMessage(sessionId, COMPACT_PROMPT, [], {
+    await sendMessage(compactorSession.id, buildContextCompactionPrompt({
+      session,
+      existingSummary: compactionSource.existingSummary,
+      conversationBody: compactionSource.conversationBody,
+      toolIndex: compactionSource.toolIndex,
+      automatic,
+    }), [], {
       tool: run?.tool || session.tool,
       model: run?.model || undefined,
       effort: run?.effort || undefined,
       thinking: false,
       recordUserMessage: false,
-      internalOperation: 'context_compaction',
+      queueIfBusy: false,
+      freshThread: true,
+      skipSessionContinuation: true,
+      internalOperation: 'context_compaction_worker',
+      compactionTargetSessionId: sessionId,
+      compactionSourceSeq: compactionSource.targetSeq,
+      compactionToolIndex: compactionSource.toolIndex,
+      compactionReason: automatic ? 'automatic' : 'manual',
     });
     return true;
   } catch (error) {
@@ -1137,37 +1474,41 @@ async function maybeAutoCompact(sessionId, session, run, manifest) {
   return queueContextCompaction(sessionId, session, run, { automatic: true });
 }
 
-async function findLatestCompactionSummaryEvent(sessionId) {
-  const events = await loadHistory(sessionId, { includeBodies: true });
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index];
-    if (event?.type !== 'message' || event.role !== 'assistant') continue;
-    const content = typeof event.content === 'string' ? event.content : '';
-    const match = content.match(/<summary>([\s\S]*?)<\/summary>/i);
-    const summary = (match ? match[1] : '').trim();
-    if (!summary) continue;
-    return { event, summary };
+async function applyCompactionWorkerResult(targetSessionId, run, manifest) {
+  const workerEvent = await findLatestAssistantMessageForRun(run.sessionId, run.id);
+  const parsed = parseCompactionWorkerOutput(workerEvent?.content || '');
+  const summary = parsed.summary;
+  if (!summary) {
+    await appendEvent(targetSessionId, statusEvent('error: failed to apply auto compress: compaction worker returned no <summary> block'));
+    return false;
   }
-  return { event: null, summary: '' };
-}
 
-async function extractCompactionSummaryText(sessionId) {
-  const { summary } = await findLatestCompactionSummaryEvent(sessionId);
-  return summary;
-}
+  const barrierEvent = await appendEvent(targetSessionId, createContextBarrierEvent(AUTO_COMPACT_MARKER_TEXT, {
+    automatic: manifest?.compactionReason === 'automatic',
+    compactionSessionId: run.sessionId,
+  }));
+  const handoffContent = parsed.handoff || buildFallbackCompactionHandoff(summary, manifest?.compactionToolIndex || '');
+  const handoffEvent = await appendEvent(targetSessionId, messageEvent('assistant', handoffContent, undefined, {
+    source: 'context_compaction_handoff',
+    compactionRunId: run.id,
+  }));
+  const compactEvent = await appendEvent(targetSessionId, statusEvent('Auto Compress finished — continue from the handoff below'));
 
-async function updateCompactedContext(sessionId, run) {
-  const { summary, event } = await findLatestCompactionSummaryEvent(sessionId);
-  if (!summary || !event?.seq) return false;
-  await setContextHead(sessionId, {
+  await setContextHead(targetSessionId, {
     mode: 'summary',
     summary,
-    activeFromSeq: event.seq,
-    compactedThroughSeq: event.seq,
+    toolIndex: manifest?.compactionToolIndex || '',
+    activeFromSeq: compactEvent.seq,
+    compactedThroughSeq: Number.isInteger(manifest?.compactionSourceSeq) ? manifest.compactionSourceSeq : compactEvent.seq,
     inputTokens: run.contextInputTokens || null,
     updatedAt: nowIso(),
     source: 'context_compaction',
+    barrierSeq: barrierEvent.seq,
+    handoffSeq: handoffEvent.seq,
+    compactionSessionId: run.sessionId,
   });
+
+  await clearPersistedResumeIds(targetSessionId);
   return true;
 }
 
@@ -1175,7 +1516,12 @@ async function finalizeDetachedRun(sessionId, run, manifest) {
   let historyChanged = false;
   let sessionChanged = false;
   const live = liveSessions.get(sessionId);
-  const compacting = manifest?.internalOperation === 'context_compaction';
+  const directCompaction = manifest?.internalOperation === 'context_compaction';
+  const workerCompaction = manifest?.internalOperation === 'context_compaction_worker';
+  const compacting = directCompaction || workerCompaction;
+  const compactionTargetSessionId = typeof manifest?.compactionTargetSessionId === 'string'
+    ? manifest.compactionTargetSessionId
+    : '';
 
   if (run.state === 'cancelled') {
     const event = {
@@ -1196,15 +1542,47 @@ async function finalizeDetachedRun(sessionId, run, manifest) {
   }
 
   if (compacting) {
-    if (live) {
+    const targetLive = workerCompaction && compactionTargetSessionId
+      ? liveSessions.get(compactionTargetSessionId)
+      : live;
+    if (targetLive) {
+      targetLive.pendingCompact = false;
+    }
+    if (live && live !== targetLive) {
       live.pendingCompact = false;
     }
-    if (run.state === 'completed' && await updateCompactedContext(sessionId, run)) {
-      const cleared = await clearPersistedResumeIds(sessionId);
-      sessionChanged = sessionChanged || cleared;
-      const compactEvent = statusEvent('Context compacted — next message will resume from summary');
-      await appendEvent(sessionId, compactEvent);
-      historyChanged = true;
+
+    if (workerCompaction && compactionTargetSessionId) {
+      if (run.state === 'completed') {
+        if (await applyCompactionWorkerResult(compactionTargetSessionId, run, manifest)) {
+          historyChanged = true;
+          sessionChanged = true;
+        }
+      } else if (run.state === 'failed' && run.failureReason) {
+        await appendEvent(compactionTargetSessionId, statusEvent(`error: auto compress failed: ${run.failureReason}`));
+        historyChanged = true;
+      } else if (run.state === 'cancelled') {
+        await appendEvent(compactionTargetSessionId, statusEvent('Auto Compress cancelled'));
+        historyChanged = true;
+      }
+    } else if (directCompaction && run.state === 'completed') {
+      const workerEvent = await findLatestAssistantMessageForRun(sessionId, run.id);
+      const summary = extractTaggedBlock(workerEvent?.content || '', 'summary');
+      if (summary) {
+        const compactEvent = await appendEvent(sessionId, statusEvent('Context compacted — next message will resume from summary'));
+        await setContextHead(sessionId, {
+          mode: 'summary',
+          summary,
+          activeFromSeq: compactEvent.seq,
+          compactedThroughSeq: compactEvent.seq,
+          inputTokens: run.contextInputTokens || null,
+          updatedAt: nowIso(),
+          source: 'context_compaction',
+        });
+        const cleared = await clearPersistedResumeIds(sessionId);
+        sessionChanged = sessionChanged || cleared;
+        historyChanged = true;
+      }
     }
   }
 
@@ -1241,7 +1619,13 @@ async function finalizeDetachedRun(sessionId, run, manifest) {
   })) || run;
 
   if (compacting) {
-    if (getFollowUpQueueCount(finalizedMeta.meta) > 0) {
+    if (workerCompaction && compactionTargetSessionId) {
+      const targetSession = await getSession(compactionTargetSessionId);
+      if ((targetSession?.queuedMessageCount || 0) > 0) {
+        scheduleQueuedFollowUpDispatch(compactionTargetSessionId);
+      }
+      broadcastSessionInvalidation(compactionTargetSessionId);
+    } else if (getFollowUpQueueCount(finalizedMeta.meta) > 0) {
       scheduleQueuedFollowUpDispatch(sessionId);
     }
     broadcastSessionInvalidation(sessionId);
@@ -1449,6 +1833,7 @@ export async function listSessions({ includeVisitor = false, includeArchived = t
   const normalizedAppId = normalizeAppId(appId);
   const filtered = metas
     .filter((meta) => includeVisitor || !meta.visitorId)
+    .filter((meta) => shouldExposeSession(meta))
     .filter((meta) => includeArchived || !meta.archived)
     .filter((meta) => !normalizedAppId || resolveEffectiveAppId(meta.appId) === normalizedAppId)
     .sort((a, b) => (
@@ -1557,6 +1942,8 @@ export async function createSession(folder, tool, name, extra = {}) {
     if (requestedAppName) session.appName = requestedAppName;
     if (extra.visitorId) session.visitorId = extra.visitorId;
     if (extra.systemPrompt) session.systemPrompt = extra.systemPrompt;
+    if (extra.internalRole) session.internalRole = extra.internalRole;
+    if (extra.compactsSessionId) session.compactsSessionId = extra.compactsSessionId;
     if (externalTriggerId) session.externalTriggerId = externalTriggerId;
     if (extra.forkedFromSessionId) session.forkedFromSessionId = extra.forkedFromSessionId;
     if (Number.isInteger(extra.forkedFromSeq)) session.forkedFromSeq = extra.forkedFromSeq;
@@ -1569,7 +1956,7 @@ export async function createSession(folder, tool, name, extra = {}) {
     return { session, created: true, changed: true };
   });
 
-  if ((created.created || created.changed) && !created.session.visitorId) {
+  if ((created.created || created.changed) && !created.session.visitorId && shouldExposeSession(created.session)) {
     broadcastSessionsInvalidation();
   }
 
@@ -1915,6 +2302,7 @@ export async function submitHttpMessage(sessionId, text, images, options = {}) {
 
   let activeRun = null;
   let hasActiveRun = false;
+  const hasPendingCompact = liveSessions.get(sessionId)?.pendingCompact === true;
 
   if (session.activeRunId) {
     activeRun = await flushDetachedRunIfNeeded(sessionId, session.activeRunId) || await getRun(session.activeRunId);
@@ -1928,7 +2316,7 @@ export async function submitHttpMessage(sessionId, text, images, options = {}) {
     }
   }
 
-  if ((hasActiveRun || getFollowUpQueueCount(sessionMeta) > 0) && options.queueIfBusy !== false) {
+  if ((hasActiveRun || hasPendingCompact || getFollowUpQueueCount(sessionMeta) > 0) && options.queueIfBusy !== false) {
     const normalizedText = text.trim();
     const queuedImages = options.preSavedImages?.length > 0
       ? sanitizeQueuedFollowUpImages(options.preSavedImages)
@@ -1951,7 +2339,7 @@ export async function submitHttpMessage(sessionId, text, images, options = {}) {
       return true;
     });
     const wasDuplicateQueueInsert = queuedMeta.changed === false;
-    if (!hasActiveRun) {
+    if (!hasActiveRun && !hasPendingCompact) {
       scheduleQueuedFollowUpDispatch(sessionId);
     }
     broadcastSessionInvalidation(sessionId);
@@ -1994,6 +2382,9 @@ export async function submitHttpMessage(sessionId, text, images, options = {}) {
     }
   }
 
+  const persistedClaudeSessionId = options.freshThread === true ? null : (session.claudeSessionId || null);
+  const persistedCodexThreadId = options.freshThread === true ? null : (session.codexThreadId || null);
+
   const run = await createRun({
     status: {
       sessionId,
@@ -2003,9 +2394,9 @@ export async function submitHttpMessage(sessionId, text, images, options = {}) {
       model: options.model || null,
       effort: options.effort || null,
       thinking: options.thinking === true,
-      claudeSessionId: session.claudeSessionId || null,
-      codexThreadId: session.codexThreadId || null,
-      providerResumeId: session.codexThreadId || session.claudeSessionId || null,
+      claudeSessionId: persistedClaudeSessionId,
+      codexThreadId: persistedCodexThreadId,
+      providerResumeId: persistedCodexThreadId || persistedClaudeSessionId || null,
       internalOperation: options.internalOperation || null,
     },
     manifest: {
@@ -2013,15 +2404,27 @@ export async function submitHttpMessage(sessionId, text, images, options = {}) {
       requestId,
       folder: session.folder,
       tool: effectiveTool,
-      prompt: await buildPrompt(sessionId, session, normalizedText, previousTool, effectiveTool, snapshot),
+      prompt: await buildPrompt(sessionId, session, normalizedText, previousTool, effectiveTool, snapshot, options),
       internalOperation: options.internalOperation || null,
+      ...(typeof options.compactionTargetSessionId === 'string' && options.compactionTargetSessionId
+        ? { compactionTargetSessionId: options.compactionTargetSessionId }
+        : {}),
+      ...(Number.isInteger(options.compactionSourceSeq)
+        ? { compactionSourceSeq: options.compactionSourceSeq }
+        : {}),
+      ...(typeof options.compactionToolIndex === 'string'
+        ? { compactionToolIndex: options.compactionToolIndex }
+        : {}),
+      ...(typeof options.compactionReason === 'string' && options.compactionReason
+        ? { compactionReason: options.compactionReason }
+        : {}),
       options: {
         images: savedImages,
         thinking: options.thinking === true,
         model: options.model || undefined,
         effort: options.effort || undefined,
-        claudeSessionId: session.claudeSessionId || undefined,
-        codexThreadId: session.codexThreadId || undefined,
+        claudeSessionId: persistedClaudeSessionId || undefined,
+        codexThreadId: persistedCodexThreadId || undefined,
       },
     },
   });

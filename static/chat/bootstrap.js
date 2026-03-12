@@ -75,10 +75,12 @@ const ACTIVE_SESSION_STORAGE_KEY = "activeSessionId";
 const ACTIVE_SIDEBAR_TAB_STORAGE_KEY = "activeSidebarTab";
 const ACTIVE_APP_FILTER_STORAGE_KEY = "activeAppFilter";
 const SESSION_SEEN_VERSIONS_STORAGE_KEY = "sessionSeenVersions";
-const SESSION_SEND_FAILURES_STORAGE_KEY = "sessionSendFailures";
+const LEGACY_SESSION_SEND_FAILURES_STORAGE_KEY = "sessionSendFailures";
+const PENDING_MESSAGE_STORAGE_PREFIX = "pending_msg_";
 const APP_FILTER_ALL_VALUE = "__all__";
 const DEFAULT_APP_ID = "chat";
 const DEFAULT_APP_NAME = "Chat";
+const sessionStateModel = window.RemoteLabSessionStateModel || {};
 let pendingNavigationState = readNavigationStateFromLocation();
 let currentSessionId =
   pendingNavigationState.sessionId ||
@@ -96,10 +98,6 @@ let sessionSeenVersions = readStoredJsonValue(
   SESSION_SEEN_VERSIONS_STORAGE_KEY,
   {},
 );
-let failedSendSessionIds = new Set(
-  readStoredJsonValue(SESSION_SEND_FAILURES_STORAGE_KEY, []),
-);
-const sendingSessionIds = new Set();
 let currentSessionRefreshPromise = null;
 let pendingCurrentSessionRefresh = false;
 let hasSeenWsOpen = false;
@@ -149,6 +147,10 @@ let collapsedFolders = JSON.parse(
     "{}",
 );
 
+try {
+  localStorage.removeItem(LEGACY_SESSION_SEND_FAILURES_STORAGE_KEY);
+} catch {}
+
 function readStoredJsonValue(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
@@ -166,15 +168,90 @@ function writeStoredJsonValue(key, value) {
   } catch {}
 }
 
-function persistSessionSeenVersions() {
-  writeStoredJsonValue(SESSION_SEEN_VERSIONS_STORAGE_KEY, sessionSeenVersions);
+function createEmptySessionStatus() {
+  return {
+    key: "idle",
+    label: "",
+    className: "",
+    dotClass: "",
+    itemClass: "",
+    title: "",
+  };
 }
 
-function persistFailedSendSessionIds() {
-  writeStoredJsonValue(
-    SESSION_SEND_FAILURES_STORAGE_KEY,
-    [...failedSendSessionIds],
-  );
+function normalizePendingMessageRecord(value) {
+  if (typeof sessionStateModel.normalizePendingMessage === "function") {
+    return sessionStateModel.normalizePendingMessage(value);
+  }
+  if (!value || typeof value !== "object") return null;
+  return {
+    text: typeof value.text === "string" ? value.text : "",
+    requestId: typeof value.requestId === "string" ? value.requestId : "",
+    timestamp: Number.isFinite(value.timestamp) ? value.timestamp : Date.now(),
+    deliveryState:
+      value.deliveryState === "accepted" || value.deliveryState === "failed"
+        ? value.deliveryState
+        : "sending",
+  };
+}
+
+function isSessionBusy(session) {
+  if (typeof sessionStateModel.isSessionBusy === "function") {
+    return sessionStateModel.isSessionBusy(session);
+  }
+  return session?.status === "running" || session?.pendingCompact === true;
+}
+
+function shouldKeepPendingMessagePending(message, session) {
+  if (typeof sessionStateModel.shouldKeepPendingMessagePending === "function") {
+    return sessionStateModel.shouldKeepPendingMessagePending(message, session);
+  }
+  const pending = normalizePendingMessageRecord(message);
+  return !!pending && pending.deliveryState !== "failed" && isSessionBusy(session);
+}
+
+function getPendingMessageStorageKey(sessionId) {
+  if (!sessionId) return null;
+  return `${PENDING_MESSAGE_STORAGE_PREFIX}${sessionId}`;
+}
+
+function readPendingMessage(sessionId) {
+  const key = getPendingMessageStorageKey(sessionId);
+  if (!key) return null;
+  return normalizePendingMessageRecord(readStoredJsonValue(key, null));
+}
+
+function writePendingMessage(sessionId, message) {
+  const key = getPendingMessageStorageKey(sessionId);
+  const normalized = normalizePendingMessageRecord(message);
+  if (!key || !normalized) return false;
+  writeStoredJsonValue(key, normalized);
+  return true;
+}
+
+function removePendingMessage(sessionId) {
+  const key = getPendingMessageStorageKey(sessionId);
+  if (!key) return false;
+  try {
+    const existed = localStorage.getItem(key) !== null;
+    localStorage.removeItem(key);
+    return existed;
+  } catch {
+    return false;
+  }
+}
+
+function setPendingMessageDeliveryState(sessionId, deliveryState) {
+  const pending = readPendingMessage(sessionId);
+  if (!pending || pending.deliveryState === deliveryState) return false;
+  return writePendingMessage(sessionId, {
+    ...pending,
+    deliveryState,
+  });
+}
+
+function persistSessionSeenVersions() {
+  writeStoredJsonValue(SESSION_SEEN_VERSIONS_STORAGE_KEY, sessionSeenVersions);
 }
 
 function getSessionSeenVersion(session) {
@@ -213,192 +290,60 @@ function pruneStoredSessionAttentionState(sessionIds) {
     persistSessionSeenVersions();
   }
 
-  let failedChanged = false;
-  for (const sessionId of [...failedSendSessionIds]) {
-    const hasPending =
-      typeof getPendingMessage === "function" && !!getPendingMessage(sessionId);
-    if (!knownIds.has(sessionId) && !hasPending) {
-      failedSendSessionIds.delete(sessionId);
-      failedChanged = true;
+  const orphanedPendingKeys = [];
+  try {
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (!key || !key.startsWith(PENDING_MESSAGE_STORAGE_PREFIX)) continue;
+      const sessionId = key.slice(PENDING_MESSAGE_STORAGE_PREFIX.length);
+      if (!knownIds.has(sessionId)) {
+        orphanedPendingKeys.push(key);
+      }
     }
+    for (const key of orphanedPendingKeys) {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // Best-effort storage cleanup only.
   }
-  if (failedChanged) {
-    persistFailedSendSessionIds();
-  }
-}
-
-function markSessionSendInFlight(sessionId) {
-  if (!sessionId) return;
-  sendingSessionIds.add(sessionId);
-}
-
-function clearSessionSendInFlight(sessionId) {
-  if (!sessionId) return;
-  sendingSessionIds.delete(sessionId);
 }
 
 function markSessionSendFailed(sessionId) {
-  if (!sessionId) return false;
-  clearSessionSendInFlight(sessionId);
-  if (failedSendSessionIds.has(sessionId)) return false;
-  failedSendSessionIds.add(sessionId);
-  persistFailedSendSessionIds();
-  return true;
-}
-
-function clearSessionSendFailed(sessionId) {
-  if (!sessionId) return false;
-  clearSessionSendInFlight(sessionId);
-  if (!failedSendSessionIds.delete(sessionId)) return false;
-  persistFailedSendSessionIds();
-  return true;
+  return setPendingMessageDeliveryState(sessionId, "failed");
 }
 
 function finishSessionSendAttempt(sessionId, ok) {
-  if (!sessionId) return false;
-  clearSessionSendInFlight(sessionId);
-  return ok ? clearSessionSendFailed(sessionId) : markSessionSendFailed(sessionId);
+  return ok ? false : markSessionSendFailed(sessionId);
 }
 
 function hasSessionSendFailure(sessionId) {
-  if (!sessionId) return false;
-  const hasPending =
-    typeof getPendingMessage === "function" && !!getPendingMessage(sessionId);
-  return failedSendSessionIds.has(sessionId)
-    || (hasPending && !sendingSessionIds.has(sessionId));
+  return readPendingMessage(sessionId)?.deliveryState === "failed";
 }
 
-function getQueuedStatusLabel(count) {
-  const total = Number.isInteger(count) ? count : Number(count) || 0;
-  return total === 1 ? "1 queued" : `${total} queued`;
-}
-
-function getSessionVisualStatus(session, { includeToolFallback = false } = {}) {
-  if (!session) {
-    return {
-      key: "idle",
-      label: "",
-      className: "",
-      dotClass: "",
-      itemClass: "",
-      title: "",
-    };
+function getSessionStatusSummary(session, { includeToolFallback = false } = {}) {
+  if (typeof sessionStateModel.getSessionStatusSummary === "function") {
+    return sessionStateModel.getSessionStatusSummary(session, {
+      includeToolFallback,
+      hasSendFailure: hasSessionSendFailure(session?.id),
+      isRead: isSessionRead,
+    });
   }
 
-  const queuedCount = Number.isInteger(session.queuedMessageCount)
-    ? session.queuedMessageCount
-    : 0;
-  const renameError =
-    typeof session.renameError === "string" ? session.renameError.trim() : "";
-
-  if (hasSessionSendFailure(session.id)) {
-    return {
-      key: "send-failed",
-      label: "send failed",
-      className: "status-send-failed",
-      dotClass: "send-failed",
-      itemClass: "",
-      title: "The last outgoing message still needs retry or recovery",
-    };
-  }
-
-  if (queuedCount > 0) {
-    return {
-      key: "queued",
-      label: getQueuedStatusLabel(queuedCount),
-      className: "status-queued",
-      dotClass: "queued",
-      itemClass: "",
-      title: "Queued follow-up messages waiting for the next turn",
-    };
-  }
-
-  if (session.status === "running") {
-    return {
-      key: "running",
-      label: "running",
-      className: "status-running",
-      dotClass: "running",
-      itemClass: "",
-      title: "",
-    };
-  }
-
-  if (session.renameState === "pending") {
-    return {
-      key: "renaming",
-      label: "renaming",
-      className: "status-renaming",
-      dotClass: "renaming",
-      itemClass: "",
-      title: "",
-    };
-  }
-
-  if (session.renameState === "failed") {
-    return {
-      key: "rename-failed",
-      label: "rename issue",
-      className: "status-rename-failed",
-      dotClass: "rename-failed",
-      itemClass: "",
-      title: renameError || "Rename suggestion could not be applied",
-    };
-  }
-
-  if (session.status === "done") {
-    const read = isSessionRead(session);
-    return {
-      key: read ? "done-read" : "done-unread",
-      label: read ? "read" : "unread",
-      className: read ? "status-done-read" : "status-done-unread",
-      dotClass: read ? "done-read" : "done-unread",
-      itemClass: read ? "is-complete-read" : "is-complete-unread",
-      title: "",
-    };
-  }
-
-  if (session.status === "interrupted") {
-    return {
-      key: "interrupted",
-      label: "interrupted",
-      className: "status-interrupted",
-      dotClass: "interrupted",
-      itemClass: "",
-      title: "",
-    };
-  }
-
-  if (session.archived === true) {
-    return {
-      key: "archived",
-      label: "archived",
-      className: "status-archived",
-      dotClass: "",
-      itemClass: "",
-      title: "",
-    };
-  }
-
-  if (includeToolFallback && session.tool && session.name) {
-    return {
+  const primary = session?.tool && includeToolFallback
+    ? {
       key: "tool",
       label: session.tool,
       className: "",
       dotClass: "",
       itemClass: "",
       title: "",
-    };
-  }
+    }
+    : createEmptySessionStatus();
+  return { primary, indicators: primary.label ? [primary] : [] };
+}
 
-  return {
-    key: "idle",
-    label: "",
-    className: "",
-    dotClass: "",
-    itemClass: "",
-    title: "",
-  };
+function getSessionVisualStatus(session, options = {}) {
+  return getSessionStatusSummary(session, options).primary;
 }
 
 function refreshSessionAttentionUi(sessionId = currentSessionId) {

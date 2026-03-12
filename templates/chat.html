@@ -555,6 +555,18 @@ body {
   animation: fadeIn 0.1s ease;
 }
 
+.context-barrier {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 16px auto 10px;
+  padding: 10px 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-secondary) 80%, transparent);
+  max-width: min(92%, 720px);
+}
+
 /* Usage tokens */
 .usage-info {
   font-size: 11px; color: var(--text-muted); text-align: center;
@@ -1267,6 +1279,7 @@ body.visitor-mode .header #menuBtn { display: none !important; }
 
 <script nonce="{{NONCE}}">window.__REMOTELAB_BUILD__ = {{BUILD_JSON}};</script>
 <script src="/marked.min.js" nonce="{{NONCE}}"></script>
+<script src="/chat/session-state-model.js" nonce="{{NONCE}}"></script>
 <script src="/chat/bootstrap.js" nonce="{{NONCE}}"></script>
 <script src="/chat/session-http.js" nonce="{{NONCE}}"></script>
 <script src="/chat/tooling.js" nonce="{{NONCE}}"></script>

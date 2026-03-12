@@ -164,6 +164,16 @@ function renderStatusMsg(evt) {
   messagesInner.appendChild(div);
 }
 
+function renderContextBarrier(evt) {
+  if (inThinkingBlock) {
+    finalizeThinkingBlock();
+  }
+  const div = document.createElement("div");
+  div.className = "context-barrier";
+  div.textContent = evt.content || "Older messages above this marker are no longer in live context.";
+  messagesInner.appendChild(div);
+}
+
 function formatCompactTokens(n) {
   if (!Number.isFinite(n) || n <= 0) return "0";
   if (n < 1000) return `${Math.round(n)}`;
@@ -279,7 +289,7 @@ function renderQueuedMessagePanel(session) {
 
   const note = document.createElement("div");
   note.className = "queued-panel-note";
-  note.textContent = session.status === "running"
+  note.textContent = session.status === "running" || session.pendingCompact === true
     ? "Will send automatically after the current run"
     : "Preparing the next turn";
 
@@ -365,7 +375,10 @@ function renderSessionStatusHtml(statusInfo) {
 }
 
 function createActiveSessionItem(session) {
-  const statusInfo = getSessionVisualStatus(session, { includeToolFallback: true });
+  const statusSummary = getSessionStatusSummary(session, {
+    includeToolFallback: true,
+  });
+  const statusInfo = statusSummary.primary;
   const div = document.createElement("div");
   div.className =
     "session-item"
@@ -377,11 +390,16 @@ function createActiveSessionItem(session) {
   const metaParts = [];
   const countHtml = renderSessionMessageCount(session);
   if (countHtml) metaParts.push(countHtml);
-  if ((session.queuedMessageCount || 0) > 0 && statusInfo.key !== "queued") {
+  if (
+    (session.queuedMessageCount || 0) > 0
+    && !statusSummary.indicators.some((status) => status.key === "queued")
+  ) {
     metaParts.push(`<span title="Queued follow-up messages waiting for the next turn">${session.queuedMessageCount} queued</span>`);
   }
-  const statusHtml = renderSessionStatusHtml(statusInfo);
-  if (statusHtml) metaParts.push(statusHtml);
+  for (const indicator of statusSummary.indicators) {
+    const statusHtml = renderSessionStatusHtml(indicator);
+    if (statusHtml) metaParts.push(statusHtml);
+  }
   const metaHtml = metaParts.join(" · ");
   const pinTitle = session.pinned ? "Unpin" : "Pin";
 

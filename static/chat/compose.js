@@ -33,7 +33,6 @@ function sendMessage(existingRequestId) {
     pendingImages = [];
     renderImagePreviews();
   }
-  markSessionSendInFlight(sessionId);
   void dispatchAction(msg).then((ok) => {
     const changed = finishSessionSendAttempt(sessionId, ok);
     if (!ok && sessionId === currentSessionId) {
@@ -268,32 +267,24 @@ requestAnimationFrame(() => restoreSavedInputHeight());
 // ---- Pending message protection ----
 // Saves sent message to localStorage until server confirms receipt.
 // Prevents message loss on refresh, network failure, or server crash.
-function savePendingMessage(text, requestId) {
+function savePendingMessage(text, requestId, deliveryState = "sending") {
   if (!currentSessionId) return;
-  clearSessionSendFailed(currentSessionId);
   const timestamp = Date.now();
-  localStorage.setItem(
-    `pending_msg_${currentSessionId}`,
-    JSON.stringify({ text, requestId, timestamp }),
-  );
+  writePendingMessage(currentSessionId, {
+    text,
+    requestId,
+    timestamp,
+    deliveryState,
+  });
   return timestamp;
 }
 function clearPendingMessage(sessionId) {
   const targetId = sessionId || currentSessionId;
   if (!targetId) return false;
-  localStorage.removeItem(`pending_msg_${targetId}`);
-  return clearSessionSendFailed(targetId);
+  return removePendingMessage(targetId);
 }
 function getPendingMessage(sessionId) {
-  const raw = localStorage.getItem(
-    `pending_msg_${sessionId || currentSessionId}`,
-  );
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
+  return readPendingMessage(sessionId || currentSessionId);
 }
 
 function renderOptimisticMessage(text, images, timestamp = Date.now()) {
@@ -426,11 +417,15 @@ function checkPendingMessage(historyEvents) {
     return;
   }
 
+  if (shouldKeepPendingMessagePending(pending, getCurrentSession())) {
+    return;
+  }
+
   markSessionSendFailed(currentSessionId);
   refreshSessionAttentionUi();
 
   // Show the pending message with recovery actions
-  renderPendingRecovery(pending);
+  renderPendingRecovery(getPendingMessage() || pending);
 }
 
 // ---- Sidebar tabs ----

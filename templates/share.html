@@ -158,6 +158,7 @@ body {
 
 .msg-assistant,
 .msg-system,
+.context-barrier,
 .usage-info,
 .thinking-block,
 .tool-card,
@@ -225,6 +226,17 @@ body {
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 7px 11px;
+}
+
+.context-barrier {
+  align-self: stretch;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .usage-info {

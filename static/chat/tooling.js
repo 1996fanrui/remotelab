@@ -260,7 +260,7 @@ function syncForkButton() {
     return;
   }
   const session = getCurrentSession();
-  forkSessionBtn.disabled = !session || session.status === "running";
+  forkSessionBtn.disabled = !session || session.status === "running" || session.pendingCompact === true;
 }
 
 async function shareCurrentSessionSnapshot() {
