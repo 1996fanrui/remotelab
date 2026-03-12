@@ -710,6 +710,10 @@ function getSessionSortTime(meta) {
   return Number.isFinite(time) ? time : 0;
 }
 
+function getSessionPinSortRank(meta) {
+  return meta?.pinned === true ? 1 : 0;
+}
+
 async function getPersistedStatus(meta) {
   if (meta?.activeRunId) {
     const run = await getRun(meta.activeRunId);
@@ -1431,7 +1435,10 @@ export async function listSessions({ includeVisitor = false, includeArchived = t
     .filter((meta) => includeVisitor || !meta.visitorId)
     .filter((meta) => includeArchived || !meta.archived)
     .filter((meta) => !normalizedAppId || resolveEffectiveAppId(meta.appId) === normalizedAppId)
-    .sort((a, b) => getSessionSortTime(b) - getSessionSortTime(a));
+    .sort((a, b) => (
+      getSessionPinSortRank(b) - getSessionPinSortRank(a)
+      || getSessionSortTime(b) - getSessionSortTime(a)
+    ));
   return Promise.all(filtered.map((meta) => enrichSessionMetaForClient(meta, { includeQueuedMessages })));
 }
 
@@ -1563,6 +1570,7 @@ export async function setSessionArchived(id, archived = true) {
     if (isArchived === shouldArchive) return false;
     if (shouldArchive) {
       session.archived = true;
+      delete session.pinned;
       session.archivedAt = nowIso();
       session.updatedAt = session.archivedAt;
       return true;
@@ -1582,6 +1590,30 @@ export async function setSessionArchived(id, archived = true) {
     broadcastSessionsInvalidation();
   }
   broadcastSessionInvalidation(id);
+  return enrichSessionMeta(result.meta);
+}
+
+export async function setSessionPinned(id, pinned = true) {
+  const shouldPin = pinned === true;
+  const result = await mutateSessionMeta(id, (session) => {
+    if (session.archived && shouldPin) return false;
+    const isPinned = session.pinned === true;
+    if (isPinned === shouldPin) return false;
+    if (shouldPin) {
+      session.pinned = true;
+    } else {
+      delete session.pinned;
+    }
+    return true;
+  });
+
+  if (!result.meta) return null;
+  if (result.changed && !result.meta.visitorId) {
+    broadcastSessionsInvalidation();
+  }
+  if (result.changed) {
+    broadcastSessionInvalidation(id);
+  }
   return enrichSessionMeta(result.meta);
 }
 

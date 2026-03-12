@@ -223,8 +223,16 @@ function getInputChromeH() {
   return Math.max(0, areaH - inputH);
 }
 
+function getViewportHeight() {
+  const visualHeight = window.visualViewport?.height;
+  if (Number.isFinite(visualHeight) && visualHeight > 0) {
+    return visualHeight;
+  }
+  return window.innerHeight || 0;
+}
+
 function getManualInputMaxH() {
-  const viewportMax = Math.floor(window.innerHeight * INPUT_MAX_VIEWPORT_RATIO);
+  const viewportMax = Math.floor(getViewportHeight() * INPUT_MAX_VIEWPORT_RATIO);
   return Math.max(INPUT_MANUAL_MIN_H, viewportMax - getInputChromeH());
 }
 
@@ -527,21 +535,20 @@ let activeTab = normalizeSidebarTab(
   pendingNavigationState.tab ||
     localStorage.getItem(ACTIVE_SIDEBAR_TAB_STORAGE_KEY) ||
     "sessions",
-); // "sessions" | "progress"
+); // "sessions" | "settings"
 
 function switchTab(tab, { syncState = true } = {}) {
   activeTab = normalizeSidebarTab(tab);
   const showingSessions = activeTab === "sessions";
   tabSessions.classList.toggle("active", activeTab === "sessions");
-  tabProgress.classList.toggle("active", activeTab === "progress");
+  tabSettings.classList.toggle("active", activeTab === "settings");
   if (typeof syncSidebarFiltersVisibility === "function") {
     syncSidebarFiltersVisibility(showingSessions);
   } else if (sidebarFilters) {
     sidebarFilters.classList.toggle("hidden", !showingSessions);
   }
   sessionList.style.display = showingSessions ? "" : "none";
-  progressPanel.classList.toggle("visible", activeTab === "progress");
-  progressPanel.textContent = "";
+  settingsPanel.classList.toggle("visible", activeTab === "settings");
   sessionListFooter.classList.toggle("hidden", !showingSessions);
   newSessionBtn.classList.toggle("hidden", !showingSessions);
   if (syncState) {
@@ -550,5 +557,5 @@ function switchTab(tab, { syncState = true } = {}) {
 }
 
 tabSessions.addEventListener("click", () => switchTab("sessions"));
-tabProgress.addEventListener("click", () => switchTab("progress"));
+tabSettings.addEventListener("click", () => switchTab("settings"));
 switchTab(activeTab, { syncState: false });

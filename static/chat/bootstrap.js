@@ -42,9 +42,9 @@ const sessionTemplateRow = document.getElementById("sessionTemplateRow");
 const sessionTemplateSelect = document.getElementById("sessionTemplateSelect");
 const sessionTemplateStatus = document.getElementById("sessionTemplateStatus");
 const tabSessions = document.getElementById("tabSessions");
-const tabProgress = document.getElementById("tabProgress");
+const tabSettings = document.getElementById("tabSettings");
 const appFilterSelect = document.getElementById("appFilterSelect");
-const progressPanel = document.getElementById("progressPanel");
+const settingsPanel = document.getElementById("settingsPanel");
 const inputArea = document.getElementById("inputArea");
 const inputResizeHandle = document.getElementById("inputResizeHandle");
 const addToolModal = document.getElementById("addToolModal");
@@ -204,7 +204,7 @@ function initializePushNotifications() {
 registerHiddenMarkdownExtensions();
 
 function normalizeSidebarTab(tab) {
-  return tab === "progress" ? "progress" : "sessions";
+  return tab === "settings" || tab === "progress" ? "settings" : "sessions";
 }
 
 function normalizeNavigationState(raw) {
@@ -267,7 +267,7 @@ function buildNavigationUrl(state = {}) {
   url.searchParams.delete("source");
   if (nextSessionId) url.searchParams.set("session", nextSessionId);
   else url.searchParams.delete("session");
-  if (nextTab === "progress") url.searchParams.set("tab", nextTab);
+  if (nextTab === "settings") url.searchParams.set("tab", nextTab);
   else url.searchParams.delete("tab");
   return `${url.pathname}${url.search}`;
 }
@@ -397,7 +397,11 @@ function matchesCurrentAppFilter(session) {
 }
 
 function getVisibleActiveSessions() {
-  return getActiveSessions().filter((session) => matchesCurrentAppFilter(session));
+  return getActiveSessions().filter((session) => !session.pinned && matchesCurrentAppFilter(session));
+}
+
+function getVisiblePinnedSessions() {
+  return getActiveSessions().filter((session) => session.pinned === true && matchesCurrentAppFilter(session));
 }
 
 function getVisibleArchivedSessions() {
@@ -472,8 +476,15 @@ function getSessionSortTime(session) {
   return Number.isFinite(time) ? time : 0;
 }
 
+function getSessionPinSortRank(session) {
+  return session?.pinned === true ? 1 : 0;
+}
+
 function sortSessionsInPlace() {
-  sessions.sort((a, b) => getSessionSortTime(b) - getSessionSortTime(a));
+  sessions.sort((a, b) => (
+    getSessionPinSortRank(b) - getSessionPinSortRank(a)
+    || getSessionSortTime(b) - getSessionSortTime(a)
+  ));
 }
 
 function getArchivedSessionSortTime(session) {

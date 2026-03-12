@@ -118,6 +118,26 @@ async function dispatchAction(msg) {
         }
         return true;
       }
+      case "pin":
+      case "unpin": {
+        const data = await fetchJsonOrRedirect(`/api/sessions/${encodeURIComponent(msg.sessionId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pinned: msg.action === "pin" }),
+        });
+        if (data.session) {
+          const session = upsertSession(data.session) || data.session;
+          renderSessionList();
+          if (currentSessionId === msg.sessionId) {
+            applyAttachedSessionState(msg.sessionId, session);
+          }
+        } else if (currentSessionId === msg.sessionId) {
+          await refreshCurrentSession();
+        } else {
+          await fetchSessionsList();
+        }
+        return true;
+      }
       case "send": {
         const pending = getPendingMessage();
         const requestId = msg.requestId || pending?.requestId || createRequestId();

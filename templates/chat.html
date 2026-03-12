@@ -30,6 +30,7 @@
   --error: #dc2626;
   --error-bg: #fef2f2;
   --warning: #d97706;
+  --app-height: 100dvh;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-top: env(safe-area-inset-top, 0px);
   --sidebar-width: 300px;
@@ -38,11 +39,15 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+html { height: 100%; }
+
 body {
   font-family: -apple-system, system-ui, 'Segoe UI', sans-serif;
   background: var(--bg);
   color: var(--text);
-  height: 100dvh;
+  min-height: 100vh;
+  min-height: 100dvh;
+  height: var(--app-height, 100dvh);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -106,6 +111,7 @@ body {
   display: flex;
   flex-direction: row;
   flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -164,12 +170,31 @@ body {
   border-color: var(--border-strong);
 }
 
-/* Progress panel */
-.progress-panel {
+/* Settings panel */
+.settings-panel {
   flex: 1;
   display: none;
+  padding: 12px;
 }
-.progress-panel.visible { display: block; }
+.settings-panel.visible { display: block; }
+.settings-placeholder {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 14px;
+}
+
+.pinned-section { margin-bottom: 8px; }
+.pinned-section-header {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px;
+  color: var(--text-secondary); font-size: 11px; font-weight: 500;
+  letter-spacing: 0.04em; text-transform: uppercase;
+}
+.pinned-label { flex: 1; }
 
 /* Folder groups */
 .folder-group { margin-bottom: 4px; }
@@ -205,6 +230,13 @@ body {
   font-size: 13px; font-weight: 500; color: var(--text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.session-pin-badge {
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  vertical-align: middle;
+}
 .session-item-meta {
   font-size: 11px; color: var(--text-muted); margin-top: 1px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -223,6 +255,8 @@ body {
 }
 .session-item:hover .session-action-btn { opacity: 1; }
 .session-action-btn:hover { background: var(--bg-tertiary); color: var(--text); }
+.session-action-btn.pin { font-size: 12px; }
+.session-action-btn.pin.pinned { opacity: 1; color: var(--text-secondary); }
 .session-action-btn.del:hover { background: var(--error-bg); color: var(--error); }
 .session-action-btn.restore:hover { background: var(--bg-tertiary); color: var(--accent); }
 @media (hover: none) { .session-action-btn { opacity: 1; } }
@@ -290,12 +324,14 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
   min-width: 0;
 }
 
 /* ---- Messages ---- */
 .messages {
   flex: 1; overflow-y: auto; padding: 20px 16px;
+  min-height: 0;
   -webkit-overflow-scrolling: touch;
 }
 .messages-inner {
@@ -1102,7 +1138,7 @@ body.visitor-mode .header #menuBtn { display: none !important; }
       </div>
       <div class="sidebar-tabs">
         <button class="sidebar-tab active" id="tabSessions">Sessions</button>
-        <button class="sidebar-tab" id="tabProgress">Progress</button>
+        <button class="sidebar-tab" id="tabSettings">Settings</button>
       </div>
       <div class="sidebar-filters" id="sidebarFilters">
         <select class="sidebar-filter-select" id="appFilterSelect" aria-label="Filter sessions by app">
@@ -1110,7 +1146,9 @@ body.visitor-mode .header #menuBtn { display: none !important; }
         </select>
       </div>
       <div class="sidebar-list" id="sessionList"></div>
-      <div class="progress-panel" id="progressPanel"></div>
+      <div class="settings-panel" id="settingsPanel">
+        <div class="settings-placeholder">Settings will live here later. For now this replaces the retired Progress tab.</div>
+      </div>
       <div class="session-list-footer" id="sessionListFooter" title="Build {{BUILD_TITLE}}">Build {{BUILD_TITLE}}</div>
       <button class="new-session-btn" id="newSessionBtn">+ New Session</button>
     </aside>

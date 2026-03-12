@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from 'assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -93,7 +93,7 @@ async function startServer({ home, port }) {
 
   await waitFor(async () => {
     try {
-      const res = await request(port, 'GET', '/api/auth/me');
+      const res = await request(port, 'GET', '/login', null, { Cookie: '' });
       return res.status === 200;
     } catch {
       return false;
@@ -111,10 +111,22 @@ async function stopServer(server) {
 
 async function main() {
   const { home } = setupTempHome();
+  const sessionsFile = join(home, '.config', 'remotelab', 'auth-sessions.json');
   const port = randomPort();
   const server = await startServer({ home, port });
 
   try {
+    const authMe = await request(port, 'GET', '/api/auth/me');
+    assert.equal(authMe.status, 200, 'auth info endpoint should work for owner session');
+    assert.equal(authMe.headers['set-cookie']?.length, 1, 'auth info should refresh a near-expiry auth cookie');
+    assert.match(authMe.headers['set-cookie'][0], /SameSite=Lax/i, 'auth cookie should use SameSite=Lax for better PWA compatibility');
+    assert.match(authMe.headers['set-cookie'][0], /Max-Age=86400/i, 'auth cookie should include an explicit Max-Age');
+    const refreshedSessions = JSON.parse(readFileSync(sessionsFile, 'utf8'));
+    assert.ok(
+      refreshedSessions['test-session']?.expiry > Date.now() + 23 * 60 * 60 * 1000,
+      'auth info should extend server-side session expiry as a sliding session',
+    );
+
     const page = await request(port, 'GET', '/');
     assert.equal(page.status, 200, 'chat page should render for owner session');
     assert.match(page.text, /<script src="\/chat\/bootstrap\.js"/);
@@ -125,6 +137,12 @@ async function main() {
     assert.match(page.text, /<script src="\/chat\/compose\.js"/);
     assert.match(page.text, /<script src="\/chat\/init\.js"/);
     assert.match(page.text, /id="appFilterSelect"/);
+    assert.match(page.text, /id="tabSettings"/);
+    assert.doesNotMatch(page.text, /id="tabProgress"/);
+    assert.match(page.text, /--app-height:\s*100dvh/);
+    assert.match(page.text, /\.app-container\s*\{[\s\S]*?min-height:\s*0;/);
+    assert.match(page.text, /\.chat-area\s*\{[\s\S]*?min-height:\s*0;/);
+    assert.match(page.text, /\.messages\s*\{[\s\S]*?min-height:\s*0;/);
     assert.ok(!page.text.includes('/chat.js?v='), 'chat page should not pin the chat frontend to a versioned URL');
     assert.ok(!page.text.includes('/marked.min.js?v='), 'chat page should let marked.min.js use normal revalidation');
     assert.ok(!page.text.includes('/manifest.json?v='), 'chat page should let manifest use normal revalidation');
@@ -143,6 +161,7 @@ async function main() {
       name: 'Owner chat session',
     });
     assert.equal(createdChat.status, 201, 'owner chat session should be creatable over HTTP');
+    const createdChatJson = JSON.parse(createdChat.text);
 
     const createdGithub = await request(port, 'POST', '/api/sessions', {
       folder: home,
@@ -152,6 +171,27 @@ async function main() {
       appName: 'GitHub',
     });
     assert.equal(createdGithub.status, 201, 'GitHub-scoped session should be creatable over HTTP');
+    const createdGithubJson = JSON.parse(createdGithub.text);
+
+    const pinned = await request(port, 'PATCH', `/api/sessions/${createdChatJson.session.id}`, {
+      pinned: true,
+    });
+    assert.equal(pinned.status, 200, 'session pinning should be available over HTTP');
+    assert.match(pinned.text, /"pinned":true/);
+
+    const allSessions = await request(port, 'GET', '/api/sessions');
+    assert.equal(allSessions.status, 200, 'full session list should load');
+    const allSessionsJson = JSON.parse(allSessions.text);
+    assert.equal(
+      allSessionsJson.sessions?.[0]?.id,
+      createdChatJson.session.id,
+      'pinned session should sort to the top of the session list',
+    );
+    assert.equal(
+      allSessionsJson.sessions?.some((session) => session.id === createdGithubJson.session.id),
+      true,
+      'other sessions should remain visible after pinning',
+    );
 
     const githubOnly = await request(port, 'GET', '/api/sessions?appId=github');
     assert.equal(githubOnly.status, 200, 'app-filtered session list should load');
@@ -168,6 +208,24 @@ async function main() {
     );
     assert.ok(splitAsset.headers.etag, 'split asset should expose an ETag');
     assert.match(splitAsset.text, /const buildInfo = window\.__REMOTELAB_BUILD__ \|\| \{\};/);
+
+    const toolingAsset = await request(port, 'GET', '/chat/tooling.js');
+    assert.equal(toolingAsset.status, 200, 'tooling asset should load');
+    assert.match(toolingAsset.text, /document\.documentElement\.style\.setProperty\("--app-height"/);
+    assert.match(toolingAsset.text, /window\.visualViewport\?\.addEventListener\("resize", syncViewportHeight\)/);
+
+    const tokenLogin = await request(
+      port,
+      'GET',
+      '/?token=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      null,
+      { Cookie: '' },
+    );
+    assert.equal(tokenLogin.status, 302, 'token login should redirect into the app');
+    assert.equal(tokenLogin.headers.location, '/', 'token login should land on the root app');
+    assert.equal(tokenLogin.headers['set-cookie']?.length, 1, 'token login should issue a session cookie');
+    assert.match(tokenLogin.headers['set-cookie'][0], /SameSite=Lax/i, 'token login cookie should use SameSite=Lax');
+    assert.match(tokenLogin.headers['set-cookie'][0], /Max-Age=86400/i, 'token login cookie should include Max-Age');
 
     const splitAsset304 = await request(port, 'GET', '/chat/bootstrap.js', null, {
       'If-None-Match': splitAsset.headers.etag,

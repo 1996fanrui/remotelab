@@ -72,6 +72,7 @@ function createContext({
   storageSeed = {},
   chromeHeight = 48,
   windowInnerHeight = 900,
+  visualViewportHeight = null,
 } = {}) {
   const localStorage = new StorageMock();
   Object.entries(storageSeed).forEach(([key, value]) => {
@@ -120,6 +121,7 @@ function createContext({
     innerHeight: windowInnerHeight,
     addEventListener() {},
     visualViewport: {
+      height: visualViewportHeight,
       addEventListener() {},
     },
   };
@@ -142,12 +144,13 @@ function createContext({
     compactBtn: makeEventTarget(),
     dropToolsBtn: makeEventTarget(),
     sendBtn: makeEventTarget(),
+    sessionTemplateSelect: makeEventTarget(),
+    saveTemplateBtn: makeEventTarget(),
     tabSessions: makeEventTarget(),
-    tabProgress: makeEventTarget(),
+    tabSettings: makeEventTarget(),
     sessionListFooter: makeEventTarget(),
     newSessionBtn: makeEventTarget(),
-    progressPanel: {
-      textContent: '',
+    settingsPanel: {
       classList: {
         toggle() {},
       },
@@ -161,7 +164,7 @@ function createContext({
     pendingNavigationState: {},
     ACTIVE_SIDEBAR_TAB_STORAGE_KEY: 'activeSidebarTab',
     normalizeSidebarTab(value) {
-      return value || 'sessions';
+      return value === 'settings' || value === 'progress' ? 'settings' : 'sessions';
     },
     syncBrowserState() {},
     pendingImages: [],
@@ -245,3 +248,12 @@ vm.runInNewContext(composeSource, legacyContext, { filename: 'static/chat/compos
 assert.equal(legacyContext.msgInput.style.height, '192px', 'legacy container height should migrate into a textarea height');
 assert.equal(legacyContext.localStorage.getItem('msgInputHeight'), '192', 'legacy height should be migrated into the new textarea storage key');
 assert.equal(legacyContext.localStorage.getItem('inputAreaHeight'), null, 'legacy height storage should be cleared after migration');
+
+const standaloneViewportContext = createContext({
+  windowInnerHeight: 500,
+  visualViewportHeight: 260,
+});
+vm.runInNewContext(composeSource, standaloneViewportContext, { filename: 'static/chat/compose.js' });
+standaloneViewportContext.setManualInputHeight(220);
+standaloneViewportContext.syncInputHeightForLayout();
+assert.equal(standaloneViewportContext.msgInput.style.height, '139px', 'manual composer height should clamp against visualViewport height when available');

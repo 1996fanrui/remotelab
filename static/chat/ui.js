@@ -355,10 +355,103 @@ function getSessionGroupInfo(session) {
   };
 }
 
+function createActiveSessionItem(session) {
+  const div = document.createElement("div");
+  div.className =
+    "session-item"
+    + (session.pinned ? " pinned" : "")
+    + (session.id === currentSessionId ? " active" : "");
+
+  const displayName = getSessionDisplayName(session);
+  const metaParts = [];
+  const countHtml = renderSessionMessageCount(session);
+  if (countHtml) metaParts.push(countHtml);
+  if ((session.queuedMessageCount || 0) > 0) {
+    metaParts.push(`<span title="Queued follow-up messages waiting for the next turn">${session.queuedMessageCount} queued</span>`);
+  }
+  const renameReason = session.renameError ? ` title="${esc(session.renameError)}"` : "";
+  const statusHtml = session.status === "done" || finishedUnread.has(session.id)
+    ? `<span class="status-done">● done</span>`
+    : session.renameState === "pending"
+    ? `<span class="status-renaming">● renaming</span>`
+    : session.renameState === "failed"
+      ? `<span class="status-rename-failed"${renameReason}>● rename failed</span>`
+    : session.status === "running"
+      ? `<span class="status-running">● running</span>`
+      : session.status === "interrupted"
+      ? `<span class="status-interrupted">● interrupted</span>`
+      : session.tool && session.name
+        ? `<span>${esc(session.tool)}</span>`
+        : "";
+  if (statusHtml) metaParts.push(statusHtml);
+  const metaHtml = metaParts.join(" · ");
+  const pinTitle = session.pinned ? "Unpin" : "Pin";
+
+  div.innerHTML = `
+    <div class="session-item-info">
+      <div class="session-item-name">${session.pinned ? '<span class="session-pin-badge" title="Pinned">&#128204;</span>' : ""}${esc(displayName)}</div>
+      <div class="session-item-meta">${metaHtml}</div>
+    </div>
+    <div class="session-item-actions">
+      <button class="session-action-btn pin${session.pinned ? " pinned" : ""}" title="${pinTitle}" data-id="${session.id}">&#128204;</button>
+      <button class="session-action-btn rename" title="Rename" data-id="${session.id}">&#9998;</button>
+      <button class="session-action-btn archive" title="Archive" data-id="${session.id}">&#8615;</button>
+    </div>`;
+
+  div.addEventListener("click", (e) => {
+    if (
+      e.target.classList.contains("pin")
+      || e.target.classList.contains("rename")
+      || e.target.classList.contains("archive")
+    ) {
+      return;
+    }
+    attachSession(session.id, session);
+    if (!isDesktop) closeSidebarFn();
+  });
+
+  div.querySelector(".pin").addEventListener("click", (e) => {
+    e.stopPropagation();
+    dispatchAction({ action: session.pinned ? "unpin" : "pin", sessionId: session.id });
+  });
+
+  div.querySelector(".rename").addEventListener("click", (e) => {
+    e.stopPropagation();
+    startRename(div, session);
+  });
+
+  div.querySelector(".archive").addEventListener("click", (e) => {
+    e.stopPropagation();
+    dispatchAction({ action: "archive", sessionId: session.id });
+  });
+
+  return div;
+}
+
 // ---- Session list ----
 function renderSessionList() {
   sessionList.innerHTML = "";
+  const pinnedSessions = getVisiblePinnedSessions();
   const visibleSessions = getVisibleActiveSessions();
+
+  if (pinnedSessions.length > 0) {
+    const section = document.createElement("div");
+    section.className = "pinned-section";
+
+    const header = document.createElement("div");
+    header.className = "pinned-section-header";
+    header.innerHTML = `<span class="pinned-label">Pinned</span><span class="folder-count">${pinnedSessions.length}</span>`;
+
+    const items = document.createElement("div");
+    items.className = "pinned-items";
+    for (const session of pinnedSessions) {
+      items.appendChild(createActiveSessionItem(session));
+    }
+
+    section.appendChild(header);
+    section.appendChild(items);
+    sessionList.appendChild(section);
+  }
 
   const groups = new Map();
   for (const s of visibleSessions) {
@@ -394,65 +487,7 @@ function renderSessionList() {
     items.className = "folder-group-items";
 
     for (const s of folderSessions) {
-      const div = document.createElement("div");
-      div.className =
-        "session-item" + (s.id === currentSessionId ? " active" : "");
-
-      const displayName = getSessionDisplayName(s);
-      const metaParts = [];
-      const countHtml = renderSessionMessageCount(s);
-      if (countHtml) metaParts.push(countHtml);
-      if ((s.queuedMessageCount || 0) > 0) {
-        metaParts.push(`<span title="Queued follow-up messages waiting for the next turn">${s.queuedMessageCount} queued</span>`);
-      }
-      const renameReason = s.renameError ? ` title="${esc(s.renameError)}"` : "";
-      const statusHtml = s.status === "done" || finishedUnread.has(s.id)
-        ? `<span class="status-done">● done</span>`
-        : s.renameState === "pending"
-        ? `<span class="status-renaming">● renaming</span>`
-        : s.renameState === "failed"
-          ? `<span class="status-rename-failed"${renameReason}>● rename failed</span>`
-        : s.status === "running"
-          ? `<span class="status-running">● running</span>`
-          : s.status === "interrupted"
-          ? `<span class="status-interrupted">● interrupted</span>`
-          : s.tool && s.name
-            ? `<span>${esc(s.tool)}</span>`
-            : "";
-      if (statusHtml) metaParts.push(statusHtml);
-      const metaHtml = metaParts.join(" · ");
-
-      div.innerHTML = `
-        <div class="session-item-info">
-          <div class="session-item-name">${esc(displayName)}</div>
-          <div class="session-item-meta">${metaHtml}</div>
-        </div>
-        <div class="session-item-actions">
-          <button class="session-action-btn rename" title="Rename" data-id="${s.id}">&#9998;</button>
-          <button class="session-action-btn archive" title="Archive" data-id="${s.id}">&#8615;</button>
-        </div>`;
-
-      div.addEventListener("click", (e) => {
-        if (
-          e.target.classList.contains("rename") ||
-          e.target.classList.contains("archive")
-        )
-          return;
-        attachSession(s.id, s);
-        if (!isDesktop) closeSidebarFn();
-      });
-
-      div.querySelector(".rename").addEventListener("click", (e) => {
-        e.stopPropagation();
-        startRename(div, s);
-      });
-
-      div.querySelector(".archive").addEventListener("click", (e) => {
-        e.stopPropagation();
-        dispatchAction({ action: "archive", sessionId: s.id });
-      });
-
-      items.appendChild(div);
+      items.appendChild(createActiveSessionItem(s));
     }
 
     group.appendChild(header);
@@ -460,7 +495,7 @@ function renderSessionList() {
     sessionList.appendChild(group);
   }
 
-  if (visibleSessions.length === 0) {
+  if (pinnedSessions.length === 0 && visibleSessions.length === 0) {
     const empty = document.createElement("div");
     empty.className = "session-filter-empty";
     empty.textContent = activeAppFilter === APP_FILTER_ALL_VALUE

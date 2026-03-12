@@ -1,4 +1,20 @@
 // ---- Responsive layout ----
+function getViewportHeightPx() {
+  const visualHeight = window.visualViewport?.height;
+  if (Number.isFinite(visualHeight) && visualHeight > 0) {
+    return Math.round(visualHeight);
+  }
+  const innerHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  return Math.round(innerHeight);
+}
+
+function syncViewportHeight() {
+  const height = getViewportHeightPx();
+  if (height > 0) {
+    document.documentElement.style.setProperty("--app-height", `${height}px`);
+  }
+}
+
 function initResponsiveLayout() {
   const mq = window.matchMedia("(min-width: 768px)");
   function onBreakpointChange(e) {
@@ -10,6 +26,9 @@ function initResponsiveLayout() {
       sidebarOverlay.classList.remove("collapsed");
     }
   }
+  syncViewportHeight();
+  window.addEventListener("resize", syncViewportHeight);
+  window.visualViewport?.addEventListener("resize", syncViewportHeight);
   mq.addEventListener("change", onBreakpointChange);
   onBreakpointChange(mq);
 }

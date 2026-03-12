@@ -10,7 +10,7 @@ import {
   sessions, saveAuthSessionsAsync,
   verifyTokenAsync, verifyPasswordAsync, generateToken,
   parseCookies, setCookie, clearCookie,
-  getAuthSession,
+  getAuthSession, refreshAuthSession,
 } from '../lib/auth.mjs';
 import { getAvailableToolsAsync, saveSimpleToolAsync } from '../lib/tools.mjs';
 import {
@@ -30,6 +30,7 @@ import {
   saveSessionAsTemplate,
   sendMessage,
   setSessionArchived,
+  setSessionPinned,
   submitHttpMessage,
 } from './session-manager.mjs';
 import { appendEvent, readEventBody } from './history.mjs';
@@ -159,12 +160,14 @@ function writeCachedResponse(req, res, {
   body,
   cacheControl,
   vary,
+  headers: extraHeaders = {},
 } = {}) {
   const etag = createEtag(body);
   const headers = {
     'Cache-Control': cacheControl,
     ETag: etag,
     'X-RemoteLab-Build': BUILD_INFO.title,
+    ...extraHeaders,
   };
   if (vary) headers.Vary = vary;
 
@@ -183,6 +186,7 @@ function writeJsonCached(req, res, payload, {
   statusCode = 200,
   cacheControl = 'private, no-cache',
   vary = 'Cookie',
+  headers,
 } = {}) {
   writeCachedResponse(req, res, {
     statusCode,
@@ -190,6 +194,7 @@ function writeJsonCached(req, res, payload, {
     body: JSON.stringify(payload),
     cacheControl,
     vary,
+    headers,
   });
 }
 
@@ -517,8 +522,13 @@ export async function handleRequest(req, res) {
       return;
     }
     const hasArchivedPatch = Object.prototype.hasOwnProperty.call(patch || {}, 'archived');
+    const hasPinnedPatch = Object.prototype.hasOwnProperty.call(patch || {}, 'pinned');
     if (hasArchivedPatch && typeof patch.archived !== 'boolean') {
       writeJson(res, 400, { error: 'archived must be a boolean' });
+      return;
+    }
+    if (hasPinnedPatch && typeof patch.pinned !== 'boolean') {
+      writeJson(res, 400, { error: 'pinned must be a boolean' });
       return;
     }
     let session = null;
@@ -527,6 +537,9 @@ export async function handleRequest(req, res) {
     }
     if (hasArchivedPatch) {
       session = await setSessionArchived(sessionId, patch.archived) || session;
+    }
+    if (hasPinnedPatch) {
+      session = await setSessionPinned(sessionId, patch.pinned) || session;
     }
     if (!session) {
       session = await getSession(sessionId);
@@ -1123,7 +1136,10 @@ export async function handleRequest(req, res) {
       info.sessionId = authSession.sessionId;
       info.visitorId = authSession.visitorId;
     }
-    writeJsonCached(req, res, info);
+    const refreshedCookie = await refreshAuthSession(req);
+    writeJsonCached(req, res, info, {
+      headers: refreshedCookie ? { 'Set-Cookie': refreshedCookie } : undefined,
+    });
     return;
   }
 
@@ -1131,11 +1147,13 @@ export async function handleRequest(req, res) {
   if (pathname === '/') {
     try {
       const chatPage = await readFile(chatTemplatePath, 'utf8');
+      const refreshedCookie = await refreshAuthSession(req);
       res.writeHead(200, buildHeaders({
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'private, no-store, max-age=0, must-revalidate',
         'Pragma': 'no-cache',
         'Expires': '0',
+        ...(refreshedCookie ? { 'Set-Cookie': refreshedCookie } : {}),
       }));
       res.end(renderPageTemplate(chatPage, nonce));
     } catch {
