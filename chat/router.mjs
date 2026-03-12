@@ -1,5 +1,5 @@
 import { readFile, readdir } from 'fs/promises';
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync, statSync } from 'fs';
 import { homedir } from 'os';
 import { join, resolve, dirname, basename, extname, relative, isAbsolute, sep } from 'path';
 import { parse as parseUrl, fileURLToPath } from 'url';
@@ -63,6 +63,13 @@ const loginTemplatePath = join(__dirname, '..', 'templates', 'login.html');
 const shareTemplatePath = join(__dirname, '..', 'templates', 'share.html');
 const staticDir = join(__dirname, '..', 'static');
 const packageJsonPath = join(__dirname, '..', 'package.json');
+const serviceBuildRoots = [
+  join(__dirname, '..', 'chat'),
+  join(__dirname, '..', 'lib'),
+  join(__dirname, '..', 'chat-server.mjs'),
+  packageJsonPath,
+];
+const serviceBuildStatusPaths = ['chat', 'lib', 'chat-server.mjs', 'package.json'];
 
 const BUILD_INFO = loadBuildInfo();
 const pageBuildRoots = [
@@ -92,6 +99,47 @@ const staticMimeTypesByExtension = {
 
 const staticDirResolved = resolve(staticDir);
 
+function getLatestMtimeMsSync(path) {
+  let stat;
+  try {
+    stat = statSync(path);
+  } catch {
+    return 0;
+  }
+
+  const ownMtime = Number.isFinite(stat.mtimeMs) ? stat.mtimeMs : 0;
+  if (!stat.isDirectory()) return ownMtime;
+
+  let entries = [];
+  try {
+    entries = readdirSync(path, { withFileTypes: true });
+  } catch {
+    return ownMtime;
+  }
+
+  return entries.reduce((latestMtime, entry) => {
+    if (entry.name.startsWith('.')) return latestMtime;
+    return Math.max(latestMtime, getLatestMtimeMsSync(join(path, entry.name)));
+  }, ownMtime);
+}
+
+function formatMtimeFingerprint(mtimeMs, fallbackSeed = Date.now()) {
+  const numericValue = Number.isFinite(mtimeMs) && mtimeMs > 0 ? mtimeMs : fallbackSeed;
+  return Math.round(numericValue).toString(36);
+}
+
+function hasDirtyRepoPaths(paths) {
+  try {
+    return execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--', ...paths], {
+      cwd: join(__dirname, '..'),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function loadBuildInfo() {
   let version = 'dev';
   try {
@@ -108,13 +156,40 @@ function loadBuildInfo() {
     }).trim();
   } catch {}
 
-  const assetVersion = [version, commit || `start-${Date.now().toString(36)}`]
-    .filter(Boolean)
-    .join('-')
-    .replace(/[^a-zA-Z0-9._-]+/g, '-');
-  const label = commit || version;
-  const title = commit ? `v${version} · ${commit}` : `v${version}`;
-  return { version, commit, assetVersion, label, title };
+  const serviceDirty = hasDirtyRepoPaths(serviceBuildStatusPaths);
+  const serviceFingerprint = serviceDirty
+    ? formatMtimeFingerprint(serviceBuildRoots.reduce(
+      (latestMtime, root) => Math.max(latestMtime, getLatestMtimeMsSync(root)),
+      0,
+    ))
+    : '';
+  const serviceLabelBase = commit || version;
+  const serviceLabel = serviceDirty ? `${serviceLabelBase}*` : serviceLabelBase;
+  const serviceAssetVersion = sanitizeAssetVersion([
+    version,
+    commit || 'working',
+    serviceDirty && serviceFingerprint ? `dirty-${serviceFingerprint}` : 'clean',
+  ].filter(Boolean).join('-'));
+  const serviceTitleParts = [
+    `Service v${version}`,
+    serviceLabel,
+  ];
+  if (serviceFingerprint) serviceTitleParts.push(`srv:${serviceFingerprint}`);
+  const serviceTitle = serviceTitleParts.join(' · ');
+  return {
+    version,
+    commit,
+    assetVersion: serviceAssetVersion,
+    label: serviceLabel,
+    title: serviceTitle,
+    serviceVersion: version,
+    serviceCommit: commit,
+    serviceDirty,
+    serviceFingerprint,
+    serviceAssetVersion,
+    serviceLabel,
+    serviceTitle,
+  };
 }
 
 function renderPageTemplate(template, nonce, replacements = {}) {
@@ -182,15 +257,20 @@ async function getPageBuildInfo() {
   const frontendFingerprint = latestMtimeMs > 0
     ? Math.round(latestMtimeMs).toString(36)
     : now.toString(36);
+  const frontendLabel = `ui:${frontendFingerprint}`;
+  const frontendTitle = `Frontend ${frontendLabel}`;
   const assetVersion = sanitizeAssetVersion([
-    BUILD_INFO.version,
-    BUILD_INFO.commit || 'working',
+    BUILD_INFO.serviceAssetVersion || BUILD_INFO.assetVersion || 'service',
     frontendFingerprint,
   ].filter(Boolean).join('-'));
   const info = {
     ...BUILD_INFO,
     assetVersion,
     frontendFingerprint,
+    frontendLabel,
+    frontendTitle,
+    label: `${BUILD_INFO.serviceLabel} · ${frontendLabel}`,
+    title: `${BUILD_INFO.serviceTitle} · ${frontendTitle}`,
   };
 
   cachedPageBuildInfo = {
@@ -584,6 +664,8 @@ export async function handleRequest(req, res) {
       vary: '',
       headers: {
         'X-RemoteLab-Asset-Version': pageBuildInfo.assetVersion,
+        'X-RemoteLab-Service-Build': pageBuildInfo.serviceTitle,
+        'X-RemoteLab-Frontend-Build': pageBuildInfo.frontendTitle,
       },
     });
     return;

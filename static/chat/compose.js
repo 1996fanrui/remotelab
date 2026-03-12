@@ -283,7 +283,11 @@ function restoreFailedSendState(sessionId, text, images) {
     releaseImageObjectUrls(images);
   }
 
-  msgInput.focus();
+  if (typeof focusComposer === "function") {
+    focusComposer({ force: true, preventScroll: true });
+  } else {
+    msgInput.focus();
+  }
 }
 
 function renderOptimisticMessage(text, images, timestamp = Date.now()) {

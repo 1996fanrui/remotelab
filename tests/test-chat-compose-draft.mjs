@@ -125,11 +125,13 @@ function createContext({
       addEventListener() {},
     },
   };
+  const focusComposerCalls = [];
   const context = {
     console,
     msgInput,
     inputArea,
     inputResizeHandle: makeEventTarget(),
+    focusComposerCalls,
     currentSessionId: 'session-a',
     localStorage,
     window: windowTarget,
@@ -186,6 +188,11 @@ function createContext({
     messagesInner: { appendChild() {}, innerHTML: '', children: [] },
     appendMessageTimestamp() {},
     scrollToBottom() {},
+    focusComposer(options) {
+      focusComposerCalls.push(options ?? null);
+      msgInput.focus(options);
+      return true;
+    },
     URL: {
       revokeObjectURL() {},
     },
@@ -257,3 +264,10 @@ vm.runInNewContext(composeSource, standaloneViewportContext, { filename: 'static
 standaloneViewportContext.setManualInputHeight(220);
 standaloneViewportContext.syncInputHeightForLayout();
 assert.equal(standaloneViewportContext.msgInput.style.height, '139px', 'manual composer height should clamp against visualViewport height when available');
+
+const failedSendFocusContext = createContext();
+vm.runInNewContext(composeSource, failedSendFocusContext, { filename: 'static/chat/compose.js' });
+failedSendFocusContext.restoreFailedSendState('session-a', 'retry me', []);
+assert.equal(failedSendFocusContext.focusComposerCalls.length, 1, 'failed-send recovery should invoke the shared focus helper once');
+assert.equal(failedSendFocusContext.focusComposerCalls[0]?.force, true, 'failed-send recovery should force composer focus when rehydrating the draft');
+assert.equal(failedSendFocusContext.focusComposerCalls[0]?.preventScroll, true, 'failed-send recovery should keep the viewport from jumping during draft recovery');

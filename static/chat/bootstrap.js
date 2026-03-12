@@ -4,12 +4,18 @@ const buildInfo = window.__REMOTELAB_BUILD__ || {};
 const buildAssetVersion = buildInfo.assetVersion || "dev";
 const BUILD_INFO_ENDPOINT = "/api/build-info";
 const BUILD_REFRESH_CHECK_INTERVAL_MS = 4000;
+const BUILD_FORCE_RELOAD_HOLD_MS = 700;
 
-console.info("RemoteLab build", buildInfo.title || buildAssetVersion);
+console.info(
+  "RemoteLab build",
+  buildInfo.title || buildInfo.serviceTitle || buildAssetVersion,
+);
 
 let buildRefreshCheckPromise = null;
 let lastBuildRefreshCheckAt = 0;
 let buildRefreshScheduled = false;
+let newerBuildInfo = null;
+let buildForceReloadHoldTimer = null;
 
 async function fetchLatestBuildInfo() {
   const res = await fetch(BUILD_INFO_ENDPOINT, {
@@ -23,14 +29,64 @@ async function fetchLatestBuildInfo() {
   return res.json();
 }
 
-function reloadForFreshBuild(nextBuildInfo) {
+async function clearFrontendCaches() {
+  if (!("serviceWorker" in navigator)) return;
+  const registration = await navigator.serviceWorker.getRegistration().catch(
+    () => null,
+  );
+  if (!registration) return;
+  const message = { type: "remotelab:clear-caches" };
+  registration.installing?.postMessage(message);
+  registration.waiting?.postMessage(message);
+  registration.active?.postMessage(message);
+}
+
+function updateFrontendRefreshUi() {
+  if (!refreshFrontendBtn) return;
+  const hasUpdate = !!newerBuildInfo?.assetVersion;
+  refreshFrontendBtn.hidden = !hasUpdate;
+  refreshFrontendBtn.classList.toggle("ready", hasUpdate);
+  refreshFrontendBtn.textContent = hasUpdate ? "Update" : "";
+}
+
+function hasPendingComposerState() {
+  const draft = typeof msgInput?.value === "string" ? msgInput.value.trim() : "";
+  return draft.length > 0 || pendingImages.length > 0;
+}
+
+function canAutoApplyFreshBuild() {
+  if (document.visibilityState !== "visible") return false;
+  if (addToolModal && !addToolModal.hidden) return false;
+  if (document.activeElement === msgInput) return false;
+  if (hasPendingComposerState()) return false;
+  if (["running", "queued", "compacting"].includes(sessionStatus)) return false;
+  return true;
+}
+
+async function reloadForFreshBuild(nextBuildInfo, { force = false } = {}) {
   if (buildRefreshScheduled) return;
   buildRefreshScheduled = true;
+  refreshFrontendBtn?.setAttribute("aria-busy", "true");
   console.info(
     "RemoteLab frontend updated; reloading",
-    nextBuildInfo?.assetVersion || "unknown",
+    nextBuildInfo?.title ||
+      newerBuildInfo?.title ||
+      nextBuildInfo?.assetVersion ||
+      newerBuildInfo?.assetVersion ||
+      "unknown",
   );
+  if (!force && !canAutoApplyFreshBuild()) {
+    buildRefreshScheduled = false;
+    refreshFrontendBtn?.removeAttribute("aria-busy");
+    newerBuildInfo = nextBuildInfo || newerBuildInfo;
+    updateFrontendRefreshUi();
+    return false;
+  }
+  try {
+    await clearFrontendCaches();
+  } catch {}
   window.location.reload();
+  return true;
 }
 
 async function checkForUpdatedBuild({ force = false } = {}) {
@@ -49,9 +105,12 @@ async function checkForUpdatedBuild({ force = false } = {}) {
         latestBuildInfo?.assetVersion &&
         latestBuildInfo.assetVersion !== buildAssetVersion
       ) {
-        reloadForFreshBuild(latestBuildInfo);
-        return true;
+        newerBuildInfo = latestBuildInfo;
+        updateFrontendRefreshUi();
+        return reloadForFreshBuild(latestBuildInfo);
       }
+      newerBuildInfo = null;
+      updateFrontendRefreshUi();
     } catch (error) {
       console.debug?.("RemoteLab build check skipped", error?.message || error);
     } finally {
@@ -79,6 +138,12 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
+window.setInterval(() => {
+  if (document.visibilityState === "visible") {
+    void checkForUpdatedBuild();
+  }
+}, BUILD_REFRESH_CHECK_INTERVAL_MS);
+
 // ---- Elements ----
 const menuBtn = document.getElementById("menuBtn");
 const sidebarOverlay = document.getElementById("sidebarOverlay");
@@ -97,6 +162,7 @@ const queuedPanel = document.getElementById("queuedPanel");
 const msgInput = document.getElementById("msgInput");
 const sendBtn = document.getElementById("sendBtn");
 const headerTitle = document.getElementById("headerTitle");
+const refreshFrontendBtn = document.getElementById("refreshFrontendBtn");
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
 const imgBtn = document.getElementById("imgBtn");
@@ -142,6 +208,29 @@ const addToolStatus = document.getElementById("addToolStatus");
 const providerPromptCode = document.getElementById("providerPromptCode");
 const saveToolConfigBtn = document.getElementById("saveToolConfigBtn");
 const copyProviderPromptBtn = document.getElementById("copyProviderPromptBtn");
+
+function startBuildForceReloadHold() {
+  clearTimeout(buildForceReloadHoldTimer);
+  buildForceReloadHoldTimer = setTimeout(() => {
+    void reloadForFreshBuild(newerBuildInfo, { force: true });
+  }, BUILD_FORCE_RELOAD_HOLD_MS);
+}
+
+function cancelBuildForceReloadHold() {
+  clearTimeout(buildForceReloadHoldTimer);
+  buildForceReloadHoldTimer = null;
+}
+
+[headerTitle, statusDot, statusText].forEach((element) => {
+  element?.addEventListener("pointerdown", startBuildForceReloadHold);
+  element?.addEventListener("pointerup", cancelBuildForceReloadHold);
+  element?.addEventListener("pointerleave", cancelBuildForceReloadHold);
+  element?.addEventListener("pointercancel", cancelBuildForceReloadHold);
+});
+
+refreshFrontendBtn?.addEventListener("click", () => {
+  void reloadForFreshBuild(newerBuildInfo, { force: true });
+});
 
 let ws = null;
 let pendingImages = [];

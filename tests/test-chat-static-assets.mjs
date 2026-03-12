@@ -133,24 +133,29 @@ async function main() {
     assert.match(page.text, /<meta name="theme-color" content="#ffffff" media="\(prefers-color-scheme: light\)">/);
     assert.match(page.text, /<meta name="theme-color" content="#1e1e1e" media="\(prefers-color-scheme: dark\)">/);
     assert.match(page.text, /@media \(prefers-color-scheme: dark\)/);
-    assert.match(page.text, /<script src="\/chat\/bootstrap\.js"/);
-    assert.match(page.text, /<script src="\/chat\/session-http\.js"/);
-    assert.match(page.text, /<script src="\/chat\/tooling\.js"/);
-    assert.match(page.text, /<script src="\/chat\/realtime\.js"/);
-    assert.match(page.text, /<script src="\/chat\/ui\.js"/);
-    assert.match(page.text, /<script src="\/chat\/compose\.js"/);
-    assert.match(page.text, /<script src="\/chat\/init\.js"/);
+    assert.match(page.text, /<script src="\/chat\/bootstrap\.js(?:\?v=[^"]*)?"/);
+    assert.match(page.text, /<script src="\/chat\/session-http\.js(?:\?v=[^"]*)?"/);
+    assert.match(page.text, /<script src="\/chat\/tooling\.js(?:\?v=[^"]*)?"/);
+    assert.match(page.text, /<script src="\/chat\/realtime\.js(?:\?v=[^"]*)?"/);
+    assert.match(page.text, /<script src="\/chat\/ui\.js(?:\?v=[^"]*)?"/);
+    assert.match(page.text, /<script src="\/chat\/compose\.js(?:\?v=[^"]*)?"/);
+    assert.match(page.text, /<script src="\/chat\/init\.js(?:\?v=[^"]*)?"/);
     assert.match(page.text, /id="appFilterSelect"/);
     assert.match(page.text, /id="tabSettings"/);
     assert.doesNotMatch(page.text, /id="tabProgress"/);
     assert.doesNotMatch(page.text, /id="saveTemplateBtn"/);
     assert.doesNotMatch(page.text, /id="sessionTemplateSelect"/);
     assert.match(page.text, /--app-height:\s*100dvh/);
+    assert.match(page.text, /--app-top-offset:\s*0px/);
+    assert.match(page.text, /--keyboard-inset-height:\s*0px/);
     assert.match(page.text, /\.app-container\s*\{[\s\S]*?min-height:\s*0;/);
     assert.match(page.text, /\.chat-area\s*\{[\s\S]*?min-height:\s*0;/);
     assert.match(page.text, /\.messages\s*\{[\s\S]*?min-height:\s*0;/);
+    assert.match(page.text, /@media \(max-width: 767px\)\s*\{[\s\S]*?body\s*\{[\s\S]*?position:\s*fixed;/);
+    assert.match(page.text, /body\.keyboard-open \.messages/);
+    assert.match(page.text, /body\.keyboard-open \.input-area/);
     assert.ok(!page.text.includes('/chat.js?v='), 'chat page should not pin the chat frontend to a versioned URL');
-    assert.ok(!page.text.includes('/marked.min.js?v='), 'chat page should let marked.min.js use normal revalidation');
+    assert.match(page.text, /\/marked\.min\.js\?v=/, 'chat page should fingerprint marked.min.js alongside the split chat assets');
     assert.match(page.text, /\/manifest\.json\?v=/, 'chat page should fingerprint the manifest URL so installed PWAs refresh policy changes');
 
     const manifest = await request(port, 'GET', '/manifest.json');
@@ -241,7 +246,19 @@ async function main() {
     const toolingAsset = await request(port, 'GET', '/chat/tooling.js');
     assert.equal(toolingAsset.status, 200, 'tooling asset should load');
     assert.match(toolingAsset.text, /document\.documentElement\.style\.setProperty\("--app-height"/);
+    assert.match(toolingAsset.text, /document\.documentElement\.style\.setProperty\("--app-top-offset"/);
+    assert.match(toolingAsset.text, /document\.documentElement\.style\.setProperty\("--keyboard-inset-height"/);
     assert.match(toolingAsset.text, /window\.visualViewport\?\.addEventListener\("resize", syncViewportHeight\)/);
+    assert.match(toolingAsset.text, /window\.visualViewport\?\.addEventListener\("scroll", syncViewportHeight\)/);
+    assert.match(toolingAsset.text, /function focusComposer\(/);
+
+    const uiAsset = await request(port, 'GET', '/chat/ui.js');
+    assert.equal(uiAsset.status, 200, 'ui asset should load');
+    assert.match(uiAsset.text, /focusComposer\(\{ preventScroll: true \}\)/);
+
+    const composeAsset = await request(port, 'GET', '/chat/compose.js');
+    assert.equal(composeAsset.status, 200, 'compose asset should load');
+    assert.match(composeAsset.text, /focusComposer\(\{ force: true, preventScroll: true \}\)/);
 
     const tokenLogin = await request(
       port,

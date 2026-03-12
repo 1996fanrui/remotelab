@@ -621,7 +621,11 @@ function attachSession(id, session) {
     dispatchAction({ action: "attach", sessionId: id });
   }
   applyAttachedSessionState(id, session);
-  msgInput.focus();
+  if (typeof focusComposer === "function") {
+    focusComposer({ preventScroll: true });
+  } else {
+    msgInput.focus();
+  }
 }
 
 // ---- Sidebar ----

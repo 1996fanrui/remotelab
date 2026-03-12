@@ -49,6 +49,8 @@
   --modal-shadow: 0 24px 60px rgba(0,0,0,0.24);
   --focus-border: #9f9f9f;
   --app-height: 100dvh;
+  --app-top-offset: 0px;
+  --keyboard-inset-height: 0px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-top: env(safe-area-inset-top, 0px);
   --sidebar-width: 300px;
@@ -104,7 +106,11 @@
   pointer-events: none;
 }
 
-html { height: 100%; }
+html {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior-y: none;
+}
 
 body {
   font-family: -apple-system, system-ui, 'Segoe UI', sans-serif;
@@ -114,6 +120,7 @@ body {
   min-height: 100dvh;
   height: var(--app-height, 100dvh);
   overflow: hidden;
+  overscroll-behavior-y: none;
   display: flex;
   flex-direction: column;
 }
@@ -147,6 +154,24 @@ body {
 }
 .header-share-btn:hover { background: var(--bg-secondary); color: var(--text); border-color: var(--border-strong); }
 .header-share-btn:disabled { opacity: 0.7; cursor: wait; }
+.header-refresh-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 28px; padding: 0 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--bg-secondary);
+  color: var(--text-muted); font-size: 11px; font-weight: 600;
+  cursor: pointer; flex-shrink: 0;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease, opacity 0.14s ease;
+}
+.header-refresh-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.header-refresh-btn.ready {
+  color: var(--notice);
+  border-color: color-mix(in srgb, var(--notice) 28%, var(--border));
+}
+.header-refresh-btn[hidden] { display: none !important; }
 .status-dot {
   width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted);
   display: inline-block; flex-shrink: 0;
@@ -1208,6 +1233,49 @@ body {
   .modal-backdrop { padding-left: calc(var(--sidebar-collapsed-width) + 24px); }
 }
 
+@media (max-width: 767px) {
+  body {
+    position: fixed;
+    top: var(--app-top-offset);
+    left: 0;
+    right: 0;
+    width: 100%;
+    transition: top 0.18s ease, height 0.18s ease;
+  }
+
+  .messages,
+  .input-area,
+  .input-config-row,
+  .input-row,
+  .input-resize-handle {
+    transition: padding 0.18s ease, margin 0.18s ease, height 0.18s ease;
+  }
+
+  body.keyboard-open .messages {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  body.keyboard-open .input-area {
+    padding-bottom: calc(6px + var(--safe-bottom));
+  }
+
+  body.keyboard-open .input-resize-handle {
+    height: 12px;
+    margin-bottom: 4px;
+  }
+
+  body.keyboard-open .input-config-row {
+    padding-top: 6px;
+    padding-bottom: 4px;
+  }
+
+  body.keyboard-open .input-row {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+}
+
 /* ---- Visitor mode: chat-only, no sidebar ---- */
 body.visitor-mode .sidebar-overlay { display: none !important; }
 body.visitor-mode .header #menuBtn { display: none !important; }
@@ -1234,6 +1302,7 @@ body.visitor-mode .gesture-pill { display: none !important; }
   <h1 id="headerTitle">RemoteLab Chat</h1>
   <button class="header-share-btn" id="forkSessionBtn" title="Create an isolated copy of this session" style="display:none">Fork</button>
   <button class="header-share-btn" id="shareSnapshotBtn" title="Create a read-only snapshot link" style="display:none">Share</button>
+  <button class="header-refresh-btn" id="refreshFrontendBtn" type="button" title="Reload latest frontend" hidden>Update</button>
   <span class="status-dot" id="statusDot"></span>
   <span id="statusText">disconnected</span>
 </div>
@@ -1260,7 +1329,7 @@ body.visitor-mode .gesture-pill { display: none !important; }
       <div class="settings-panel" id="settingsPanel">
         <div class="settings-placeholder">Settings will live here later. For now this replaces the retired Progress tab.</div>
       </div>
-      <div class="session-list-footer" id="sessionListFooter" title="Build {{BUILD_TITLE}}">Build {{BUILD_TITLE}}</div>
+      <div class="session-list-footer" id="sessionListFooter" title="Build {{BUILD_TITLE}}">Build {{BUILD_LABEL}}</div>
       <button class="new-session-btn" id="newSessionBtn">+ New Session</button>
     </aside>
   </div>

@@ -1,18 +1,56 @@
 // ---- Responsive layout ----
-function getViewportHeightPx() {
-  const visualHeight = window.visualViewport?.height;
-  if (Number.isFinite(visualHeight) && visualHeight > 0) {
-    return Math.round(visualHeight);
-  }
+const MOBILE_KEYBOARD_OPEN_THRESHOLD = 120;
+
+function getLayoutViewportHeightPx() {
   const innerHeight = window.innerHeight || document.documentElement.clientHeight || 0;
   return Math.round(innerHeight);
 }
 
+function getViewportMetrics() {
+  const viewport = window.visualViewport;
+  const visualHeight = viewport?.height;
+  const height = Number.isFinite(visualHeight) && visualHeight > 0
+    ? Math.round(visualHeight)
+    : getLayoutViewportHeightPx();
+  const rawOffsetTop = viewport?.offsetTop;
+  const offsetTop = Number.isFinite(rawOffsetTop) && rawOffsetTop > 0
+    ? Math.round(rawOffsetTop)
+    : 0;
+  const layoutHeight = getLayoutViewportHeightPx() || height;
+  const keyboardInsetHeight = Math.max(0, layoutHeight - height - offsetTop);
+  return { height, offsetTop, keyboardInsetHeight };
+}
+
+function getViewportHeightPx() {
+  return getViewportMetrics().height;
+}
+
 function syncViewportHeight() {
-  const height = getViewportHeightPx();
+  const { height, offsetTop, keyboardInsetHeight } = getViewportMetrics();
   if (height > 0) {
     document.documentElement.style.setProperty("--app-height", `${height}px`);
   }
+  document.documentElement.style.setProperty("--app-top-offset", `${offsetTop}px`);
+  document.documentElement.style.setProperty("--keyboard-inset-height", `${keyboardInsetHeight}px`);
+
+  const keyboardOpen = !isDesktop && keyboardInsetHeight >= MOBILE_KEYBOARD_OPEN_THRESHOLD;
+  document.documentElement.classList.toggle("keyboard-open", keyboardOpen);
+  document.body?.classList.toggle("keyboard-open", keyboardOpen);
+}
+
+function focusComposer({ force = false, preventScroll = false } = {}) {
+  if (!msgInput?.focus) return false;
+  if (!force && !isDesktop) return false;
+  try {
+    if (preventScroll) {
+      msgInput.focus({ preventScroll: true });
+    } else {
+      msgInput.focus();
+    }
+  } catch {
+    msgInput.focus();
+  }
+  return true;
 }
 
 function initResponsiveLayout() {
@@ -20,15 +58,21 @@ function initResponsiveLayout() {
   function onBreakpointChange(e) {
     isDesktop = e.matches;
     if (isDesktop) {
+      document.documentElement.classList.remove("keyboard-open");
+      document.body?.classList.remove("keyboard-open");
+    }
+    if (isDesktop) {
       sidebarOverlay.classList.remove("open");
       if (sidebarCollapsed) sidebarOverlay.classList.add("collapsed");
     } else {
       sidebarOverlay.classList.remove("collapsed");
     }
+    syncViewportHeight();
   }
   syncViewportHeight();
   window.addEventListener("resize", syncViewportHeight);
   window.visualViewport?.addEventListener("resize", syncViewportHeight);
+  window.visualViewport?.addEventListener("scroll", syncViewportHeight);
   mq.addEventListener("change", onBreakpointChange);
   onBreakpointChange(mq);
 }
