@@ -14,7 +14,26 @@ export const BUILTIN_APPS = Object.freeze([
 const BUILTIN_APP_MAP = new Map(BUILTIN_APPS.map((app) => [app.id, app]));
 
 function cloneApp(app) {
-  return app ? { ...app } : null;
+  return app ? JSON.parse(JSON.stringify(app)) : null;
+}
+
+function normalizeTemplateContext(templateContext) {
+  const content = typeof templateContext?.content === 'string'
+    ? templateContext.content.trim()
+    : '';
+  if (!content) return null;
+  return {
+    content,
+    sourceSessionId: typeof templateContext?.sourceSessionId === 'string'
+      ? templateContext.sourceSessionId.trim()
+      : '',
+    sourceSessionName: typeof templateContext?.sourceSessionName === 'string'
+      ? templateContext.sourceSessionName.trim()
+      : '',
+    updatedAt: typeof templateContext?.updatedAt === 'string' && templateContext.updatedAt.trim()
+      ? templateContext.updatedAt.trim()
+      : new Date().toISOString(),
+  };
 }
 
 export function normalizeAppId(appId, { fallbackDefault = false } = {}) {
@@ -81,7 +100,15 @@ export async function getAppByShareToken(shareToken) {
   return (await loadApps()).find((app) => app.shareToken === shareToken && !app.deleted) || null;
 }
 
-export async function createApp({ name, systemPrompt, welcomeMessage, skills, tool }) {
+export async function createApp(input = {}) {
+  const {
+    name,
+    systemPrompt,
+    welcomeMessage,
+    skills,
+    tool,
+    templateContext,
+  } = input;
   return runAppsMutation(async () => {
     const id = `app_${randomBytes(16).toString('hex')}`;
     const shareToken = `share_${randomBytes(32).toString('hex')}`;
@@ -95,6 +122,10 @@ export async function createApp({ name, systemPrompt, welcomeMessage, skills, to
       shareToken,
       createdAt: new Date().toISOString(),
     };
+    const normalizedTemplateContext = normalizeTemplateContext(templateContext);
+    if (normalizedTemplateContext) {
+      app.templateContext = normalizedTemplateContext;
+    }
     const apps = await loadApps();
     apps.push(app);
     await saveApps(apps);
@@ -112,6 +143,14 @@ export async function updateApp(id, updates) {
     for (const key of allowed) {
       if (updates[key] !== undefined) {
         apps[idx][key] = updates[key];
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'templateContext')) {
+      const templateContext = normalizeTemplateContext(updates.templateContext);
+      if (templateContext) {
+        apps[idx].templateContext = templateContext;
+      } else {
+        delete apps[idx].templateContext;
       }
     }
     apps[idx].updatedAt = new Date().toISOString();

@@ -53,12 +53,12 @@ async function dispatchAction(msg) {
     switch (msg.action) {
       case "list":
         await fetchSessionsList();
-        return;
+        return true;
       case "attach":
         currentSessionId = msg.sessionId;
         hasAttachedSession = true;
         await refreshCurrentSession();
-        return;
+        return true;
       case "create": {
         const data = await fetchJsonOrRedirect("/api/sessions", {
           method: "POST",
@@ -77,7 +77,7 @@ async function dispatchAction(msg) {
         } else {
           await fetchSessionsList();
         }
-        return;
+        return true;
       }
       case "rename": {
         const data = await fetchJsonOrRedirect(`/api/sessions/${encodeURIComponent(msg.sessionId)}`, {
@@ -96,7 +96,7 @@ async function dispatchAction(msg) {
         } else {
           await refreshSidebarSession(msg.sessionId);
         }
-        return;
+        return true;
       }
       case "archive":
       case "unarchive": {
@@ -116,7 +116,7 @@ async function dispatchAction(msg) {
         } else {
           await fetchSessionsList();
         }
-        return;
+        return true;
       }
       case "send": {
         const pending = getPendingMessage();
@@ -140,37 +140,63 @@ async function dispatchAction(msg) {
           clearOptimisticMessage();
         }
         await refreshCurrentSession();
-        return;
+        return true;
+      }
+      case "apply_template": {
+        const data = await fetchJsonOrRedirect(`/api/sessions/${encodeURIComponent(msg.sessionId || currentSessionId)}/apply-template`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ appId: msg.appId }),
+        });
+        if (data.session) {
+          const session = upsertSession(data.session) || data.session;
+          renderSessionList();
+          if (currentSessionId === session.id) {
+            applyAttachedSessionState(session.id, session);
+          }
+        }
+        await refreshCurrentSession();
+        return true;
+      }
+      case "save_template": {
+        await fetchJsonOrRedirect(`/api/sessions/${encodeURIComponent(msg.sessionId || currentSessionId)}/save-template`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: msg.name || "" }),
+        });
+        await fetchAppsList();
+        return true;
       }
       case "cancel":
         await fetchJsonOrRedirect(`/api/sessions/${encodeURIComponent(currentSessionId)}/cancel`, {
           method: "POST",
         });
         await refreshCurrentSession();
-        return;
+        return true;
       case "resume_interrupted":
         await fetchJsonOrRedirect(`/api/sessions/${encodeURIComponent(currentSessionId)}/resume`, {
           method: "POST",
         });
         await refreshCurrentSession();
-        return;
+        return true;
       case "compact":
         await fetchJsonOrRedirect(`/api/sessions/${encodeURIComponent(currentSessionId)}/compact`, {
           method: "POST",
         });
         await refreshCurrentSession();
-        return;
+        return true;
       case "drop_tools":
         await fetchJsonOrRedirect(`/api/sessions/${encodeURIComponent(currentSessionId)}/drop-tools`, {
           method: "POST",
         });
         await refreshCurrentSession();
-        return;
+        return true;
       default:
-        return;
+        return false;
     }
   } catch (error) {
     console.error("HTTP action failed:", error.message);
+    return false;
   }
 }
 
@@ -275,6 +301,9 @@ function updateStatus(connState, sessState, renameState, archived = false) {
   inlineModelSelect.disabled = !hasSession || archived;
   thinkingToggle.disabled = !hasSession || archived;
   effortSelect.disabled = !hasSession || archived;
+  if (typeof syncSessionTemplateControls === "function") {
+    syncSessionTemplateControls();
+  }
   updateResumeButton();
   syncForkButton();
   syncShareButton();
@@ -297,6 +326,9 @@ function showEmpty() {
   }
   inThinkingBlock = false;
   currentThinkingBlock = null;
+  if (typeof syncSessionTemplateControls === "function") {
+    syncSessionTemplateControls();
+  }
   syncForkButton();
   syncShareButton();
 }
@@ -338,36 +370,47 @@ function appendMessageTimestamp(container, stamp, extraClass = "") {
 }
 
 function renderEvent(evt, autoScroll) {
+  let rendered = false;
+
+  switch (evt.type) {
+    case "message":
+      rendered = true;
+      renderMessage(evt);
+      break;
+    case "tool_use":
+      rendered = true;
+      renderToolUse(evt);
+      break;
+    case "tool_result":
+      rendered = true;
+      renderToolResult(evt);
+      break;
+    case "file_change":
+      rendered = true;
+      renderFileChange(evt);
+      break;
+    case "reasoning":
+      rendered = true;
+      renderReasoning(evt);
+      break;
+    case "status":
+      rendered = true;
+      renderStatusMsg(evt);
+      break;
+    case "usage":
+      rendered = true;
+      renderUsage(evt);
+      break;
+  }
+
+  if (!rendered) return;
+
   if (emptyState.parentNode === messagesInner) emptyState.remove();
 
   const shouldScroll =
     autoScroll &&
     messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight <
       120;
-
-  switch (evt.type) {
-    case "message":
-      renderMessage(evt);
-      break;
-    case "tool_use":
-      renderToolUse(evt);
-      break;
-    case "tool_result":
-      renderToolResult(evt);
-      break;
-    case "file_change":
-      renderFileChange(evt);
-      break;
-    case "reasoning":
-      renderReasoning(evt);
-      break;
-    case "status":
-      renderStatusMsg(evt);
-      break;
-    case "usage":
-      renderUsage(evt);
-      break;
-  }
 
   if (shouldScroll) scrollToBottom();
 }

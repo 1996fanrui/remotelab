@@ -13,6 +13,9 @@ const DEFAULT_STATE_PATH = join(HOME, '.config', 'remotelab', 'remote-capability
 const DEFAULT_REPORT_DIR = join(HOME, '.remotelab', 'research', 'remote-capability-monitor');
 const DEFAULT_NOTIFICATION_DIR = join(HOME, '.config', 'remotelab', 'remote-capability-monitor', 'notifications');
 const DEFAULT_NOTIFIER_PATH = join(HOME, '.remotelab', 'scripts', 'send-multi-channel-reminder.mjs');
+const DEFAULT_REMOTELAB_BASE_URL = 'http://127.0.0.1:7690';
+const DEFAULT_REMOTELAB_AUTH_FILE = join(HOME, '.config', 'remotelab', 'auth.json');
+const DEFAULT_REMOTELAB_SESSION_FOLDER = join(HOME, 'code', 'remotelab');
 const DEFAULT_BOOTSTRAP_HOURS = 168;
 const DEFAULT_LOOKBACK_HOURS = 168;
 const DEFAULT_MAX_ITEMS = 10;
@@ -21,6 +24,8 @@ const FETCH_TIMEOUT_MS = 15000;
 const INTERESTING_SCORE_THRESHOLD = 4;
 const LOW_CONFIDENCE_SCORE_THRESHOLD = 6;
 const STATE_RETENTION_DAYS = 90;
+const RUN_POLL_INTERVAL_MS = 2000;
+const RUN_POLL_TIMEOUT_MS = 10 * 60 * 1000;
 
 const SIGNALS = [
   {
@@ -248,8 +253,17 @@ function trimString(value) {
   return String(value || '').trim();
 }
 
+function sleep(ms) {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+}
+
 function normalizeWhitespace(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeBaseUrl(value) {
+  const trimmed = trimString(value);
+  return trimmed.replace(/\/+$/, '');
 }
 
 function expandHome(pathname) {
@@ -348,6 +362,13 @@ function buildSourceUrl(source) {
   const url = trimString(source?.url);
   if (!url) throw new Error(`Source ${source?.id || '(unknown)'} is missing url`);
   return url;
+}
+
+function buildSessionUrl(sessionId) {
+  const params = new URLSearchParams();
+  if (sessionId) params.set('session', sessionId);
+  params.set('tab', 'sessions');
+  return `/?${params.toString()}`;
 }
 
 function buildItemId(item, source) {
@@ -513,7 +534,8 @@ export function analyzeItem(item, source = {}) {
     score += 1;
     reasons.push('adjacent Codex signal');
   } else if (normalizedSource.target === 'happy') {
-    reasons.push('Happy bucket (low-confidence alias)');
+    score += 2;
+    reasons.push('direct Happy signal');
   }
 
   if (item?.publisher && /anthropic|openai|github/i.test(item.publisher)) {

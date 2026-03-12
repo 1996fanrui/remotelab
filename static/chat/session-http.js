@@ -247,8 +247,10 @@ function upsertSession(session) {
 
 async function fetchAppsList() {
   if (visitorMode) return [];
+  const data = await fetchJsonOrRedirect("/api/apps");
+  availableApps = Array.isArray(data.apps) ? data.apps : [];
   refreshAppCatalog();
-  return appCatalog;
+  return availableApps;
 }
 
 async function fetchSessionsList() {
@@ -332,6 +334,9 @@ async function fetchSessionEvents(sessionId) {
     for (const event of events) {
       reconcilePendingMessageState(event);
       renderEvent(event, false);
+    }
+    if (messagesInner.children.length === 0) {
+      showEmpty();
     }
     updateRenderedEventState(sessionId, events);
     const latestTurnStart = applyFinishedTurnCollapseState();

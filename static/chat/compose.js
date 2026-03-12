@@ -32,10 +32,141 @@ function sendMessage(existingRequestId) {
     pendingImages = [];
     renderImagePreviews();
   }
+  if (sessionTemplateRow) {
+    sessionTemplateRow.hidden = true;
+  }
   dispatchAction(msg);
   msgInput.value = "";
   clearDraft();
   autoResizeInput();
+}
+
+let templateStatusTimer = null;
+
+function setSessionTemplateStatus(text, { persistent = false } = {}) {
+  if (!sessionTemplateStatus) return;
+  sessionTemplateStatus.textContent = text || "";
+  sessionTemplateStatus.dataset.persistent = persistent ? "true" : "false";
+  if (templateStatusTimer) {
+    window.clearTimeout(templateStatusTimer);
+    templateStatusTimer = null;
+  }
+  if (text && !persistent) {
+    templateStatusTimer = window.setTimeout(() => {
+      if (sessionTemplateStatus.dataset.persistent !== "true") {
+        sessionTemplateStatus.textContent = "";
+      }
+    }, 1800);
+  }
+}
+
+function updateSaveTemplateButtonLabel(label, { reset = true } = {}) {
+  if (!saveTemplateBtn) return;
+  const original = saveTemplateBtn.dataset.originalLabel || saveTemplateBtn.textContent;
+  saveTemplateBtn.dataset.originalLabel = original;
+  saveTemplateBtn.textContent = label;
+  window.clearTimeout(saveTemplateBtn._resetTimer);
+  if (!reset) return;
+  saveTemplateBtn._resetTimer = window.setTimeout(() => {
+    saveTemplateBtn.textContent = saveTemplateBtn.dataset.originalLabel || original;
+    syncSessionTemplateControls();
+  }, 1600);
+}
+
+function syncSessionTemplateControls() {
+  const session = getCurrentSession();
+  const hasSession = !!session && !!currentSessionId;
+  const templateApps = typeof getTemplateApps === "function" ? getTemplateApps() : [];
+  const canSaveTemplate = !visitorMode && hasSession && !session.archived && session.status !== "running";
+
+  if (saveTemplateBtn) {
+    saveTemplateBtn.style.display = !visitorMode && hasSession ? "" : "none";
+    saveTemplateBtn.disabled = !canSaveTemplate;
+  }
+
+  if (!sessionTemplateRow || !sessionTemplateSelect) return;
+
+  const showTemplatePicker = !visitorMode
+    && hasSession
+    && !session.archived
+    && (session.messageCount || 0) === 0
+    && templateApps.length > 0;
+
+  sessionTemplateRow.hidden = !showTemplatePicker;
+  if (!showTemplatePicker) {
+    sessionTemplateSelect.disabled = true;
+    setSessionTemplateStatus("");
+    return;
+  }
+
+  const previousValue = sessionTemplateSelect.value;
+  const appliedTemplateId = normalizeAppId(session?.templateAppId || "");
+  const selectedValue = templateApps.some((app) => app.id === appliedTemplateId)
+    ? appliedTemplateId
+    : templateApps.some((app) => app.id === previousValue)
+      ? previousValue
+      : "";
+
+  sessionTemplateSelect.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = appliedTemplateId ? "Template applied" : "Apply a saved template…";
+  sessionTemplateSelect.appendChild(placeholder);
+
+  for (const app of templateApps) {
+    const option = document.createElement("option");
+    option.value = app.id;
+    option.textContent = app.name || app.id;
+    sessionTemplateSelect.appendChild(option);
+  }
+
+  sessionTemplateSelect.value = selectedValue;
+  sessionTemplateSelect.disabled = !!appliedTemplateId || session.status === "running";
+
+  if (appliedTemplateId) {
+    const appliedName = session?.templateAppName || templateApps.find((app) => app.id === appliedTemplateId)?.name || "template";
+    setSessionTemplateStatus(`Applied: ${appliedName}`, { persistent: true });
+  } else {
+    setSessionTemplateStatus("");
+  }
+}
+
+if (sessionTemplateSelect) {
+  sessionTemplateSelect.addEventListener("change", async () => {
+    const appId = normalizeAppId(sessionTemplateSelect.value || "");
+    if (!appId || !currentSessionId) return;
+    sessionTemplateSelect.disabled = true;
+    setSessionTemplateStatus("Applying…");
+    const ok = await dispatchAction({ action: "apply_template", sessionId: currentSessionId, appId });
+    if (!ok) {
+      setSessionTemplateStatus("Apply failed");
+      sessionTemplateSelect.disabled = false;
+      return;
+    }
+    setSessionTemplateStatus("Applied", { persistent: true });
+  });
+}
+
+if (saveTemplateBtn) {
+  saveTemplateBtn.addEventListener("click", async () => {
+    const session = getCurrentSession();
+    if (!session?.id || visitorMode || session.archived || session.status === "running") return;
+    const defaultName = session.name || "Untitled template";
+    const name = window.prompt("Template name", defaultName);
+    if (name === null) return;
+    const trimmedName = name.trim();
+    if (!trimmedName) return;
+
+    saveTemplateBtn.disabled = true;
+    updateSaveTemplateButtonLabel("Saving…", { reset: false });
+    const ok = await dispatchAction({ action: "save_template", sessionId: session.id, name: trimmedName });
+    if (ok) {
+      updateSaveTemplateButtonLabel("Saved");
+    } else {
+      updateSaveTemplateButtonLabel("Failed");
+    }
+    syncSessionTemplateControls();
+  });
 }
 
 cancelBtn.addEventListener("click", () => dispatchAction({ action: "cancel" }));
@@ -59,16 +190,162 @@ msgInput.addEventListener("keydown", (e) => {
   }
 });
 
-// Auto-resize textarea: 3 lines default, 10 lines max
+// ---- Composer height ----
+const INPUT_MIN_LINES = 3;
+const INPUT_AUTO_MAX_LINES = 10;
+const INPUT_MANUAL_MIN_H = 100;
+const INPUT_MAX_VIEWPORT_RATIO = 0.72;
+const INPUT_HEIGHT_STORAGE_KEY = "msgInputHeight";
+const LEGACY_INPUT_AREA_HEIGHT_STORAGE_KEY = "inputAreaHeight";
+
+let isResizingInput = false;
+let resizeStartY = 0;
+let resizeStartInputH = 0;
+
+function getInputLineHeight() {
+  return parseFloat(getComputedStyle(msgInput).lineHeight) || 24;
+}
+
+function getAutoInputMinH() {
+  return getInputLineHeight() * INPUT_MIN_LINES;
+}
+
+function getAutoInputMaxH() {
+  return getInputLineHeight() * INPUT_AUTO_MAX_LINES;
+}
+
+function getInputChromeH() {
+  if (!inputArea?.getBoundingClientRect || !msgInput?.getBoundingClientRect) {
+    return 0;
+  }
+  const areaH = inputArea.getBoundingClientRect().height || 0;
+  const inputH = msgInput.getBoundingClientRect().height || 0;
+  return Math.max(0, areaH - inputH);
+}
+
+function getManualInputMaxH() {
+  const viewportMax = Math.floor(window.innerHeight * INPUT_MAX_VIEWPORT_RATIO);
+  return Math.max(INPUT_MANUAL_MIN_H, viewportMax - getInputChromeH());
+}
+
+function clampInputHeight(height, { manual = false } = {}) {
+  const minH = getAutoInputMinH();
+  const maxH = manual
+    ? Math.max(minH, getManualInputMaxH())
+    : Math.max(minH, getAutoInputMaxH());
+  return Math.min(Math.max(height, minH), maxH);
+}
+
+function isManualInputHeightActive() {
+  return inputArea.classList.contains("is-resized");
+}
+
+function setManualInputHeight(height, { persist = true } = {}) {
+  const newH = clampInputHeight(height, { manual: true });
+  msgInput.style.height = newH + "px";
+  inputArea.classList.add("is-resized");
+  if (persist) {
+    localStorage.setItem(INPUT_HEIGHT_STORAGE_KEY, String(newH));
+    localStorage.removeItem(LEGACY_INPUT_AREA_HEIGHT_STORAGE_KEY);
+  }
+  return newH;
+}
+
 function autoResizeInput() {
-  if (inputArea.classList.contains("is-resized")) return;
+  if (isManualInputHeightActive()) return;
   msgInput.style.height = "auto";
-  const lineH = parseFloat(getComputedStyle(msgInput).lineHeight) || 24;
-  const minH = lineH * 3;
-  const maxH = lineH * 10;
-  const newH = Math.min(Math.max(msgInput.scrollHeight, minH), maxH);
+  const newH = clampInputHeight(msgInput.scrollHeight);
   msgInput.style.height = newH + "px";
 }
+
+function restoreSavedInputHeight() {
+  const savedInputH = localStorage.getItem(INPUT_HEIGHT_STORAGE_KEY);
+  if (savedInputH) {
+    const height = parseInt(savedInputH, 10);
+    if (Number.isFinite(height) && height > 0) {
+      setManualInputHeight(height, { persist: false });
+      return;
+    }
+    localStorage.removeItem(INPUT_HEIGHT_STORAGE_KEY);
+  }
+
+  const legacyInputAreaH = localStorage.getItem(LEGACY_INPUT_AREA_HEIGHT_STORAGE_KEY);
+  if (legacyInputAreaH) {
+    const legacyHeight = parseInt(legacyInputAreaH, 10);
+    if (Number.isFinite(legacyHeight) && legacyHeight > 0) {
+      const migratedHeight = Math.max(
+        getAutoInputMinH(),
+        legacyHeight - getInputChromeH(),
+      );
+      setManualInputHeight(migratedHeight);
+      return;
+    }
+    localStorage.removeItem(LEGACY_INPUT_AREA_HEIGHT_STORAGE_KEY);
+  }
+
+  autoResizeInput();
+}
+
+function syncInputHeightForLayout() {
+  if (!isManualInputHeightActive()) {
+    autoResizeInput();
+    return;
+  }
+
+  const currentHeight = parseFloat(msgInput.style.height);
+  if (Number.isFinite(currentHeight) && currentHeight > 0) {
+    setManualInputHeight(currentHeight, { persist: false });
+    return;
+  }
+
+  const savedInputH = parseInt(
+    localStorage.getItem(INPUT_HEIGHT_STORAGE_KEY) || "",
+    10,
+  );
+  if (Number.isFinite(savedInputH) && savedInputH > 0) {
+    setManualInputHeight(savedInputH, { persist: false });
+    return;
+  }
+
+  inputArea.classList.remove("is-resized");
+  autoResizeInput();
+}
+
+function onInputResizeStart(e) {
+  isResizingInput = true;
+  resizeStartY = e.touches ? e.touches[0].clientY : e.clientY;
+  resizeStartInputH = msgInput.getBoundingClientRect().height || getAutoInputMinH();
+  document.addEventListener("mousemove", onInputResizeMove);
+  document.addEventListener("touchmove", onInputResizeMove, { passive: false });
+  document.addEventListener("mouseup", onInputResizeEnd);
+  document.addEventListener("touchend", onInputResizeEnd);
+  e.preventDefault();
+}
+
+function onInputResizeMove(e) {
+  if (!isResizingInput) return;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  const dy = resizeStartY - clientY;
+  setManualInputHeight(resizeStartInputH + dy);
+  e.preventDefault();
+}
+
+function onInputResizeEnd() {
+  isResizingInput = false;
+  document.removeEventListener("mousemove", onInputResizeMove);
+  document.removeEventListener("touchmove", onInputResizeMove);
+  document.removeEventListener("mouseup", onInputResizeEnd);
+  document.removeEventListener("touchend", onInputResizeEnd);
+}
+
+if (inputResizeHandle) {
+  inputResizeHandle.addEventListener("mousedown", onInputResizeStart);
+  inputResizeHandle.addEventListener("touchstart", onInputResizeStart, { passive: false });
+}
+
+window.addEventListener("resize", syncInputHeightForLayout);
+window.visualViewport?.addEventListener("resize", syncInputHeightForLayout);
+
 // ---- Draft persistence ----
 function saveDraft() {
   if (!currentSessionId) return;
@@ -95,7 +372,7 @@ msgInput.addEventListener("input", () => {
   saveDraft();
 });
 // Set initial height
-requestAnimationFrame(() => autoResizeInput());
+requestAnimationFrame(() => restoreSavedInputHeight());
 
 // ---- Pending message protection ----
 // Saves sent message to localStorage until server confirms receipt.
