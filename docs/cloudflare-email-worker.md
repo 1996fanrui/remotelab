@@ -2,6 +2,8 @@
 
 This document is the operator contract for asking an AI agent to deploy the thin Cloudflare email edge while keeping RemoteLab's business logic local.
 
+The human should ideally provide one early packet of Cloudflare and mailbox context, let the AI do the rest, and only step back in for real browser-only or approval-only tasks.
+
 ## Copy this prompt
 
 ```text
@@ -9,10 +11,23 @@ I want you to deploy or update the RemoteLab Cloudflare Email Worker.
 
 Follow `docs/cloudflare-email-worker.md` in this repository as the deployment contract.
 Keep the workflow inside this chat.
+Before doing work, collect every missing input in one message so I can answer once.
 Do every automatable step yourself.
-Only stop for missing inputs or `[HUMAN]` steps.
+After my reply, continue autonomously and only stop for true `[HUMAN]` steps or final completion.
 When you stop, tell me exactly what I need to do in Cloudflare and how you'll validate it afterward.
 ```
+
+## One-round input handoff
+
+The AI should try to collect this context in one early exchange:
+
+- sender address and mailbox alias
+- mailbox bridge URL
+- expected Worker name or existing Worker URL
+- whether Cloudflare Email Routing is already configured
+- whether local mailbox config already exists under `~/.config/remotelab/agent-mailbox/`
+
+If any Cloudflare dashboard action is still needed, the AI should batch those asks into one visit whenever possible.
 
 ## Architecture
 
@@ -33,6 +48,7 @@ When you stop, tell me exactly what I need to do in Cloudflare and how you'll va
 ## AI execution contract
 
 - copy `cloudflare/email-worker/wrangler.example.jsonc` to the gitignored local `cloudflare/email-worker/wrangler.jsonc`
+- gather the full mailbox and Cloudflare context packet before deployment so the human is not repeatedly interrupted for small missing values
 - keep only `MAILBOX_FROM` and `MAILBOX_BRIDGE_URL` in Worker config
 - read or confirm the local mailbox tokens from `~/.config/remotelab/agent-mailbox/outbound.json` and `~/.config/remotelab/agent-mailbox/bridge.json`
 - deploy with `cloudflare/email-worker/deploy.sh`

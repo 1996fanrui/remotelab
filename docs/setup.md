@@ -2,7 +2,7 @@
 
 This document is the setup contract for an AI agent running on the target machine.
 
-The human's default job is simple: copy a prompt into their own AI agent and only step in for explicit `[HUMAN]` checkpoints. The configured object is the AI toolchain and its defaults, not a long manual checklist for the human to replay.
+The human's default job is simple: copy a prompt into their own AI agent, answer one concentrated context handoff near the start, and only step in again for explicit `[HUMAN]` checkpoints. The configured object is the AI toolchain and its defaults, not a long manual checklist for the human to replay.
 
 ## Copy this prompt
 
@@ -14,18 +14,23 @@ Subdomain: [SUBDOMAIN]
 
 Use `docs/setup.md` in this repository as the setup contract.
 Keep the workflow inside this chat.
+Before doing work, collect every missing input in one message so I can answer once.
 Do every automatable step yourself.
-Only stop when you need a missing input or hit a `[HUMAN]` step.
+After my reply, continue autonomously until a true `[HUMAN]` step or final completion.
 When you stop, tell me the exact action I need to take and how you'll verify it after I reply.
 ```
 
-## Inputs the AI should collect first
+## One-round input handoff
+
+The AI should try to collect everything below in its first exchange, not through a long trail of follow-up questions.
 
 - platform: `macOS` or `Linux`
 - domain and subdomain to expose through Cloudflare
 - which local AI CLI tools are actually installed and allowed to be used
 - default tool, model, and reasoning / effort preference for new sessions
 - auth preference: token-only or token + password fallback
+
+If something cannot be known until a browser or provider login happens, the AI should still explain the full payload it expects back so the human can return once with all missing details.
 
 If multiple tools are installed and the user has no strong preference, prefer `CodeX` (`codex`) as the default built-in tool.
 
@@ -45,11 +50,14 @@ RemoteLab setup is the primary configuration UX.
 2. Any OS, package-manager, or provider auth the AI cannot finish alone, such as a sudo password, Homebrew install approval, or external login.
 3. Opening the final RemoteLab URL on the phone and confirming the first successful login.
 
+The AI should minimize how often it interrupts the human for these checkpoints and should batch requests whenever one human visit can unblock multiple downstream steps.
+
 ## AI execution contract
 
 The AI should do the rest inside the conversation:
 
 - verify prerequisites: Node.js 18+, `cloudflared` for Cloudflare mode, and at least one supported AI CLI
+- gather the full context packet before starting execution, so the human is not repeatedly re-interrupted for small missing details
 - clone or update the repo at `~/code/remotelab`, run `npm install`, and expose the CLI with `npm link` if needed
 - prefer `remotelab setup` when it cleanly fits the environment; otherwise perform the equivalent service and tunnel setup directly
 - generate access auth with `remotelab generate-token`; optionally add password auth with `remotelab set-password`
@@ -76,4 +84,4 @@ The AI should do the rest inside the conversation:
 
 ## Repair rule
 
-If validation fails, the AI should stay in the conversation, inspect logs, and repair the machine. Keep manual instructions only for browser, approval, or external-auth steps the AI cannot do itself.
+If validation fails, the AI should stay in the conversation, inspect logs, and repair the machine. Keep manual instructions only for browser, approval, or external-auth steps the AI cannot do itself, and avoid restarting the whole questioning flow unless the missing context truly changed.

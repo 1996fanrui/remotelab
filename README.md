@@ -54,7 +54,9 @@ The important architectural assumptions are:
 
 The fastest path is still to paste a setup prompt into CodeX, Claude Code, or another capable coding agent on the machine that will host RemoteLab. It can handle almost everything automatically and stop only for truly manual steps such as Cloudflare login.
 
-Configuration docs in this repo are prompt-first: the human copies a prompt into their own AI coding agent, and the rest of the setup stays inside that conversation except for explicit `[HUMAN]` steps.
+Configuration and feature-rollout docs in this repo are model-first and prompt-first: the human copies a prompt into their own AI coding agent, the agent gathers the needed context up front in as few rounds as possible, and the rest of the work stays inside that conversation except for explicit `[HUMAN]` steps.
+
+The best pattern is one early handoff: the agent asks for everything it needs in one message, the human replies once, and then the agent keeps going autonomously until a true manual checkpoint or final completion.
 
 **Prerequisites before you paste the prompt:**
 - **macOS**: Homebrew installed + Node.js 18+
@@ -72,8 +74,9 @@ Subdomain I want to use: [SUBDOMAIN]
 
 Please follow the full setup guide at docs/setup.md in this repository.
 Keep the workflow inside this chat.
+Before you start work, collect every missing piece of context in one message so I can answer once.
 Do every step you can automatically.
-Only stop for missing inputs or [HUMAN] steps.
+After my reply, continue autonomously and only stop for real [HUMAN] steps, approvals, or final completion.
 When you stop, tell me exactly what I need to do and how you'll verify it after I reply.
 ```
 

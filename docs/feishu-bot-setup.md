@@ -2,7 +2,7 @@
 
 This document is the rollout contract for asking an AI agent on the RemoteLab machine to wire a Feishu connector.
 
-The human should mostly stay in one conversation with that agent and only leave the chat for explicit `[HUMAN]` console or client steps.
+The human should mostly stay in one conversation with that agent, hand over the needed context in one concentrated round, and only leave the chat for explicit `[HUMAN]` console or client steps.
 
 ## Copy this prompt
 
@@ -11,8 +11,9 @@ I want you to set up a RemoteLab-backed Feishu bot on this machine.
 
 Follow `docs/feishu-bot-setup.md` in this repository as the setup contract.
 Keep the workflow inside this chat.
+Before doing work, collect every missing input in one message so I can answer once.
 Do every automatable step yourself.
-Only stop for missing inputs or `[HUMAN]` steps.
+After my reply, continue autonomously and only stop for true `[HUMAN]` steps or final completion.
 When you stop, tell me exactly what I need to click or send, and how you'll verify the next state afterward.
 ```
 
@@ -33,12 +34,16 @@ This rollout stays intentionally narrow at first:
 - private chat first, group support later
 - persistent connection / long connection, not public webhook mode
 
-## Inputs the AI should confirm first
+## One-round input handoff
+
+The AI should try to confirm the whole packet below in one early exchange.
 
 - region: `feishu-cn` for `open.feishu.cn` or `lark-global` for `open.larksuite.com`
 - the first validation user is in the same Feishu tenant as the app
 - which RemoteLab session tool should back the bot by default
 - whether V0 should start with `allow_all` or `whitelist`
+
+If the app does not exist yet, the AI should tell the human in one pass which console outputs it will need back later, rather than asking for them one at a time.
 
 ## [HUMAN] steps
 
@@ -63,6 +68,8 @@ I can already search the bot in Feishu: yes / no
 
 8. After the AI reports the connector is online, send a private test message to the bot.
 
+Prefer one Feishu-console visit that covers app creation, permissions, event subscription, persistent connection mode, availability scope, and publish/apply before returning to the AI.
+
 ## Important human-side notes
 
 - Start with same-tenant private chat; do not start with cross-tenant distribution.
@@ -72,6 +79,7 @@ I can already search the bot in Feishu: yes / no
 ## AI execution contract
 
 - ensure the RemoteLab chat server is running at `http://127.0.0.1:7690`
+- front-load all missing context and expected return payloads so the human can finish the console work in as few interruptions as possible
 - create `~/.config/remotelab/feishu-connector/config.json`
 - use `npm run feishu:connect:instance` to start the connector
 - use `npm run feishu:check -- --watch 15` and the connector logs to validate inbound and outbound behavior

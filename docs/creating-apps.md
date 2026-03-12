@@ -15,11 +15,11 @@ The visitor doesn't need to know anything about prompts, tools, or configuration
 
 ## How to Create an App
 
-Open a regular session in RemoteLab and tell the AI:
+Open a regular session in RemoteLab and tell the AI what App you want in one concentrated message so it can do most of the work without repeated back-and-forth:
 
 > "I want to create an App. It should [describe what it does]."
 
-The AI will guide you through:
+The best pattern is that the AI gathers the missing details early, then drafts and creates the App with minimal interruption. It will guide you through:
 1. **Naming** the App
 2. **Writing a welcome message** — what the visitor sees first
 3. **Defining system instructions** — how the AI should behave

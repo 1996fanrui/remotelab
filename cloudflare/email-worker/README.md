@@ -2,7 +2,7 @@
 
 Minimal Cloudflare edge for a mailbox such as `agent@example.com`.
 
-Operator flow is prompt-first: ask an AI agent on the host machine to deploy this package, and only step in for Cloudflare auth or dashboard changes. Use `docs/cloudflare-email-worker.md` for the human-facing deployment contract.
+Operator flow is model-first and prompt-first: ask an AI agent on the host machine to deploy this package, give it the needed Cloudflare and mailbox context in one early handoff, and only step in for real Cloudflare auth or dashboard changes. Use `docs/cloudflare-email-worker.md` for the human-facing deployment contract.
 
 Flow:
 

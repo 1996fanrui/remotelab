@@ -27,6 +27,34 @@ class StorageMock {
   }
 }
 
+function makeClassList(initial = []) {
+  const values = new Set(initial);
+  return {
+    add(...tokens) {
+      tokens.forEach((token) => values.add(token));
+    },
+    remove(...tokens) {
+      tokens.forEach((token) => values.delete(token));
+    },
+    toggle(token, force) {
+      if (typeof force === 'boolean') {
+        if (force) values.add(token);
+        else values.delete(token);
+        return force;
+      }
+      if (values.has(token)) {
+        values.delete(token);
+        return false;
+      }
+      values.add(token);
+      return true;
+    },
+    contains(token) {
+      return values.has(token);
+    },
+  };
+}
+
 function makeEventTarget() {
   return {
     style: {},
@@ -36,35 +64,73 @@ function makeEventTarget() {
     addEventListener() {},
     focus() {},
     click() {},
-    classList: {
-      toggle() {},
-      contains() {
-        return false;
-      },
-    },
+    classList: makeClassList(),
   };
 }
 
-function createContext() {
+function createContext({
+  storageSeed = {},
+  chromeHeight = 48,
+  windowInnerHeight = 900,
+} = {}) {
+  const localStorage = new StorageMock();
+  Object.entries(storageSeed).forEach(([key, value]) => {
+    localStorage.setItem(key, value);
+  });
+
+  const inputAreaClassList = makeClassList();
   const msgInput = {
     value: '',
     scrollHeight: 12,
     style: { height: '' },
     addEventListener() {},
     focus() {},
+    getBoundingClientRect() {
+      return { height: parseFloat(this.style.height) || 72 };
+    },
+  };
+  const inputArea = {
+    style: {},
+    classList: inputAreaClassList,
+    getBoundingClientRect() {
+      return {
+        height: (parseFloat(msgInput.style.height) || 72) + chromeHeight,
+      };
+    },
+  };
+  const document = {
+    addEventListener() {},
+    removeEventListener() {},
+    getElementById() {
+      return null;
+    },
+    createElement() {
+      return {
+        appendChild() {},
+        remove() {},
+        className: '',
+        id: '',
+        textContent: '',
+        innerHTML: '',
+        style: {},
+      };
+    },
+  };
+  const windowTarget = {
+    innerHeight: windowInnerHeight,
+    addEventListener() {},
+    visualViewport: {
+      addEventListener() {},
+    },
   };
   const context = {
     console,
     msgInput,
-    inputArea: {
-      classList: {
-        contains() {
-          return false;
-        },
-      },
-    },
+    inputArea,
+    inputResizeHandle: makeEventTarget(),
     currentSessionId: 'session-a',
-    localStorage: new StorageMock(),
+    localStorage,
+    window: windowTarget,
     getComputedStyle() {
       return { lineHeight: '24' };
     },
@@ -120,22 +186,7 @@ function createContext() {
     URL: {
       revokeObjectURL() {},
     },
-    document: {
-      getElementById() {
-        return null;
-      },
-      createElement() {
-        return {
-          appendChild() {},
-          remove() {},
-          className: '',
-          id: '',
-          textContent: '',
-          innerHTML: '',
-          style: {},
-        };
-      },
-    },
+    document,
   };
   context.globalThis = context;
   return context;
@@ -143,6 +194,8 @@ function createContext() {
 
 const context = createContext();
 vm.runInNewContext(composeSource, context, { filename: 'static/chat/compose.js' });
+
+assert.equal(context.msgInput.style.height, '72px', 'composer should default to a 3-line height');
 
 context.msgInput.value = 'draft for A';
 context.saveDraft();
@@ -171,3 +224,24 @@ context.currentSessionId = null;
 context.msgInput.value = 'orphaned text';
 context.restoreDraft();
 assert.equal(context.msgInput.value, '', 'no attached session should present an empty composer');
+
+const manualContext = createContext();
+vm.runInNewContext(composeSource, manualContext, { filename: 'static/chat/compose.js' });
+manualContext.setManualInputHeight(220);
+assert.equal(manualContext.msgInput.style.height, '220px', 'manual resize should write to the textarea height directly');
+assert.equal(manualContext.localStorage.getItem('msgInputHeight'), '220', 'manual resize should persist textarea height');
+assert.equal(manualContext.inputArea.classList.contains('is-resized'), true, 'manual resize should mark the composer as manually sized');
+
+manualContext.window.innerHeight = 180;
+manualContext.syncInputHeightForLayout();
+assert.equal(manualContext.msgInput.style.height, '100px', 'manual resize should clamp against the current viewport instead of leaving stale oversized UI');
+
+const legacyContext = createContext({
+  storageSeed: {
+    inputAreaHeight: '240',
+  },
+});
+vm.runInNewContext(composeSource, legacyContext, { filename: 'static/chat/compose.js' });
+assert.equal(legacyContext.msgInput.style.height, '192px', 'legacy container height should migrate into a textarea height');
+assert.equal(legacyContext.localStorage.getItem('msgInputHeight'), '192', 'legacy height should be migrated into the new textarea storage key');
+assert.equal(legacyContext.localStorage.getItem('inputAreaHeight'), null, 'legacy height storage should be cleared after migration');

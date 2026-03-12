@@ -2,7 +2,7 @@
 
 This document is the contract for asking an AI agent to set up the recurring product-intelligence watcher on the local machine.
 
-The human should usually only approve missing logins or decide the source and notification policy. Everything else should stay inside the conversation with the AI.
+The human should usually only approve missing logins or decide the source and notification policy once near the start. Everything else should stay inside the conversation with the AI.
 
 ## Copy this prompt
 
@@ -11,10 +11,20 @@ I want you to set up the RemoteLab capability monitor on this machine.
 
 Follow `docs/remote-capability-monitor.md` in this repository as the rollout contract.
 Keep the workflow inside this chat.
+Before doing work, collect every missing input in one message so I can answer once.
 Do every automatable step yourself.
-Only stop for missing inputs or `[HUMAN]` steps.
+After my reply, continue autonomously and only stop for true `[HUMAN]` steps or final completion.
 When you stop, tell me exactly what I need to decide or authorize, and how you'll validate the result afterward.
 ```
+
+## One-round input handoff
+
+The AI should try to collect this packet in one early exchange:
+
+- which competitors, feeds, or adjacent tools matter most
+- whether the rollout is dry-run only or should send notifications
+- which notifier channels are allowed
+- the desired schedule if the monitor should become recurring
 
 ## What the monitor answers
 
@@ -33,6 +43,7 @@ The monitor continuously answers a narrow question set:
 ## AI execution contract
 
 - keep shared logic in `scripts/remote-capability-monitor.mjs`
+- gather source and notification policy in one early handoff so the operator can step away after replying once
 - write machine-local config to `~/.config/remotelab/remote-capability-monitor/config.json`
 - tune `sources`, `bootstrapHours`, `reportDir`, and `notification` locally rather than hardcoding operator details in the repo
 - run a bootstrap dry-run first:

@@ -1,6 +1,6 @@
 # GitHub Auto Triage（Prompt-First 配置契约）
 
-这份文档默认不是给人类逐条敲命令的，而是给你自己的 AI agent 一份 rollout 契约。人类主要做两件事：把 prompt 发给 agent；在明确的 `[HUMAN]` 节点完成登录、授权或发布确认。
+这份文档默认不是给人类逐条敲命令的，而是给你自己的 AI agent 一份 rollout 契约。人类主要做两件事：把 prompt 发给 agent；在最开始尽量一次性把需要的上下文交给它，然后只在明确的 `[HUMAN]` 节点完成登录、授权或发布确认。
 
 ## 复制给 AI 的 prompt
 
@@ -9,10 +9,21 @@
 
 请把 `docs/github-auto-triage.md` 当作 rollout 契约。
 后续流程都留在这个对话里。
+开始执行前，请先用一条消息把缺少的上下文一次性问全，让我集中回复一次。
 能自动完成的步骤请直接做。
-只在缺少输入或遇到 `[HUMAN]` 步骤时停下来。
+我回复后，请持续自主执行；只在真的遇到 `[HUMAN]` 步骤、授权确认或最终完成时停下来。
 停下来时，请明确告诉我具体要做什么，以及你做完后会怎么验证。
 ```
+
+## 一次性交接输入
+
+AI 应该尽量在最开始一轮把这些信息问全：
+
+- 要监听的仓库
+- 维护者账号列表
+- 是否只做 `dry-run`，还是允许进入 `--post`
+- 是否需要传入 `--model`、`--effort`、`--thinking`
+- 是否需要常驻调度，以及本机应该如何调度
 
 ## 目标结果
 
@@ -41,6 +52,7 @@
 
 - 使用 `gh api` 轮询仓库的 `issues` 列表，并按 `updated_at` 抓最近变化的条目。
 - 使用 `scripts/github-auto-triage.mjs` 跑完整链路。
+- 开始前先把 repo、maintainers、发布策略、模型参数这些上下文一次性收齐，避免频繁打断人。
 - 默认先 `dry-run`，确认回复草稿质量再进入真正发布。
 - 如需常驻 rollout，创建本地 wrapper + scheduler；先不要为了这条链路直接改服务端接 webhook。
 - 如需更强回复质量，可选传入 `--model`、`--effort`、`--thinking`，但第一层先把 intake + first reply 主链路跑稳。

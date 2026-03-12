@@ -19,11 +19,14 @@ A web app that lets users control AI coding tools (Claude Code, Codex) from a ph
 
 ## Documentation Rule
 
-For setup, deployment, and integration docs, use a prompt-first shape:
+For setup, deployment, integration, and feature-activation docs, use a model-first, prompt-first shape:
 
 - assume the operator is a human delegating to their own AI coding agent
-- lead with a copyable prompt, required inputs, target state, and explicit `[HUMAN]` checkpoints
+- have the AI collect all required context in one early handoff whenever possible, instead of drip-feeding questions across many turns
+- prefer one structured input packet from the human, then autonomous execution by the AI until completion or a true `[HUMAN]` checkpoint
+- lead with a copyable prompt, one-round input requirements, target state, and explicit `[HUMAN]` checkpoints
 - keep automatable command-by-command flow inside the AI conversation or scripts, not as a long manual cookbook
+- minimize human interruption so the operator can hand off the task and come back only for approvals, browser-only actions, validation, or final handoff
 
 ---
 

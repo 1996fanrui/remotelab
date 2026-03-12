@@ -27,31 +27,33 @@ When the system changes, update the matching surface instead of letting discussi
 - domain/refactor baseline changes → `../notes/current/core-domain-contract.md`
 - outdated or conflicting notes → trim them, archive them, or rewrite them to point at the canonical doc
 
-## Configuration Docs Principle
+## Model-First Docs Principle
 
-For setup, deployment, and connector docs, assume the operator is human but the configured system is an AI toolchain.
+For setup, deployment, connector, and feature-rollout docs, assume the operator is human but the configured system is an AI toolchain.
 
 - the default human action is to copy a prompt into their own AI coding agent
+- the AI should try to collect all required context in one early handoff instead of spreading questions across many turns
 - the main execution should stay inside that chat, not in the document
 - the document should explicitly mark only the steps that truly require a human with `[HUMAN]`
-- a good config doc includes the prompt, required inputs, target state, exact config artifacts or paths, and concise validation
+- a good doc includes the prompt, one-round input packet, target state, exact config artifacts or paths, and concise validation
 - avoid full command-by-command walkthroughs for steps the AI can execute or repair on its own
+- write for low-interruption handoff: the human should usually be able to answer once, walk away, and return only for approvals, browser-only actions, checks, or final handoff
 
 ## What Lives In `docs/`
 
 ### Current Core
 
 - `project-architecture.md` — top-down map of the shipped system
-- `setup.md` — prompt-first setup contract, human checkpoints, and target state
+- `setup.md` — model-first setup contract, one-round input handoff, human checkpoints, and target state
 - `external-message-protocol.md` — canonical integration contract for external channels
 - `creating-apps.md` — user/developer guide for Apps
 
 ### Focused Integrations
 
-- `cloudflare-email-worker.md` — prompt-first Cloudflare Email Worker deployment contract
-- `feishu-bot-setup.md` — prompt-first operator + console contract for the RemoteLab Feishu connector
-- `github-auto-triage.md` — prompt-first GitHub intake and auto-reply rollout contract
-- `remote-capability-monitor.md` — prompt-first local rollout contract for remote-agent capability monitoring
+- `cloudflare-email-worker.md` — model-first Cloudflare Email Worker deployment contract
+- `feishu-bot-setup.md` — model-first operator + console contract for the RemoteLab Feishu connector
+- `github-auto-triage.md` — model-first GitHub intake and auto-reply rollout contract
+- `remote-capability-monitor.md` — model-first local rollout contract for remote-agent capability monitoring
 
 ## What Lives In `notes/`
 
@@ -79,3 +81,10 @@ If the answer is unclear, prefer:
 - `docs/` for current operational truth
 - `notes/directional/` for future design
 - `notes/archive/` for investigation history
+
+For any new feature doc that describes enabling, wiring, or operating a capability, default to the same pattern:
+
+- copyable prompt first
+- one-round input collection second
+- autonomous AI execution next
+- explicit `[HUMAN]` checkpoints only when unavoidable
