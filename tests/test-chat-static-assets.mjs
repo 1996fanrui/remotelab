@@ -200,6 +200,9 @@ async function main() {
     assert.match(page.text, /id="appFilterSelect"/);
     assert.match(page.text, /id="newAppBtn"/);
     assert.match(page.text, /id="settingsAppsList"/);
+    assert.match(page.text, /id="settingsVisitorsList"/);
+    assert.match(page.text, /id="newVisitorNameInput"/);
+    assert.match(page.text, /id="createVisitorBtn"/);
     assert.match(page.text, /id="tabSettings"/);
     assert.doesNotMatch(page.text, /id="collapseBtn"/, 'desktop sidebar should no longer expose a collapse control');
     assert.doesNotMatch(page.text, /id="tabProgress"/);

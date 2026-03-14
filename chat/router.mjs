@@ -47,6 +47,13 @@ import {
   deleteApp,
   isBuiltinAppId,
 } from './apps.mjs';
+import {
+  createVisitor,
+  deleteVisitor,
+  getVisitorByShareToken,
+  listVisitors,
+  updateVisitor,
+} from './visitors.mjs';
 import { createShareSnapshot, getShareAsset, getShareSnapshot } from './shares.mjs';
 import { parseSessionGetRoute } from './session-route-utils.mjs';
 import { readBody } from '../lib/utils.mjs';
@@ -320,6 +327,37 @@ function buildChatPageBootstrap(authSession) {
   return {
     auth: buildAuthInfo(authSession),
   };
+}
+
+async function bootstrapPublicVisitorSession(app, { visitorId, visitorName = '', sessionName = '' } = {}) {
+  const chatSession = await createSession(
+    '~',
+    app.tool || 'codex',
+    sessionName || app.name,
+    {
+      appId: app.id,
+      appName: app.name,
+      sourceId: 'chat',
+      sourceName: 'Chat',
+      visitorId,
+      visitorName,
+      systemPrompt: app.systemPrompt,
+    }
+  );
+  if (app.welcomeMessage) {
+    await appendEvent(chatSession.id, messageEvent('assistant', app.welcomeMessage));
+  }
+  const sessionToken = generateToken();
+  sessions.set(sessionToken, {
+    expiry: Date.now() + SESSION_EXPIRY,
+    role: 'visitor',
+    appId: app.id,
+    visitorId,
+    visitorName,
+    sessionId: chatSession.id,
+  });
+  await saveAuthSessionsAsync();
+  return { chatSession, sessionToken };
 }
 
 async function getLatestMtimeMs(path) {
@@ -790,34 +828,40 @@ export async function handleRequest(req, res) {
       res.end('App not found');
       return;
     }
-    // Create a visitor auth session + a new chat session from the app template
     const visitorId = 'visitor_' + generateToken().slice(0, 16);
-    const chatSession = await createSession(
-      '~',
-      app.tool || 'codex',
-      app.name,
-      {
-        appId: app.id,
-        appName: app.name,
-        sourceId: 'chat',
-        sourceName: 'Chat',
-        visitorId,
-        systemPrompt: app.systemPrompt,
-      }
-    );
-    // Inject welcome message as first assistant event so visitor sees it immediately
-    if (app.welcomeMessage) {
-      await appendEvent(chatSession.id, messageEvent('assistant', app.welcomeMessage));
-    }
-    const sessionToken = generateToken();
-    sessions.set(sessionToken, {
-      expiry: Date.now() + SESSION_EXPIRY,
-      role: 'visitor',
-      appId: app.id,
-      visitorId,
-      sessionId: chatSession.id,
+    const { sessionToken } = await bootstrapPublicVisitorSession(app, { visitorId, sessionName: app.name });
+    res.writeHead(302, {
+      'Location': '/?visitor=1',
+      'Set-Cookie': setCookie(sessionToken),
     });
-    await saveAuthSessionsAsync();
+    res.end();
+    return;
+  }
+
+  if (pathname.startsWith('/visitor/') && req.method === 'GET') {
+    const shareToken = pathname.slice('/visitor/'.length);
+    if (!shareToken) {
+      res.writeHead(404, buildHeaders({ 'Content-Type': 'text/plain' }));
+      res.end('Not Found');
+      return;
+    }
+    const visitor = await getVisitorByShareToken(shareToken);
+    if (!visitor) {
+      res.writeHead(404, buildHeaders({ 'Content-Type': 'text/plain' }));
+      res.end('Visitor link not found');
+      return;
+    }
+    const app = await getApp(visitor.appId);
+    if (!app || app.shareEnabled === false) {
+      res.writeHead(404, buildHeaders({ 'Content-Type': 'text/plain' }));
+      res.end('Assigned app not found');
+      return;
+    }
+    const { sessionToken } = await bootstrapPublicVisitorSession(app, {
+      visitorId: visitor.id,
+      visitorName: visitor.name || '',
+      sessionName: `${visitor.name || 'Visitor'} · ${app.name || 'App'}`,
+    });
     res.writeHead(302, {
       'Location': '/?visitor=1',
       'Set-Cookie': setCookie(sessionToken),
@@ -1644,6 +1688,108 @@ export async function handleRequest(req, res) {
     } else {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'App not found' }));
+    }
+    return;
+  }
+
+  // ---- Visitor preset APIs (owner only) ----
+
+  if (pathname === '/api/visitors' && req.method === 'GET') {
+    const authSession = getAuthSession(req);
+    if (authSession?.role !== 'owner') {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Owner access required' }));
+      return;
+    }
+    writeJsonCached(req, res, { visitors: await listVisitors() });
+    return;
+  }
+
+  if (pathname === '/api/visitors' && req.method === 'POST') {
+    const authSession = getAuthSession(req);
+    if (authSession?.role !== 'owner') {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Owner access required' }));
+      return;
+    }
+    let body;
+    try { body = await readBody(req, 10240); } catch {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Bad request' }));
+      return;
+    }
+    try {
+      const { name, appId } = JSON.parse(body);
+      const app = await getApp(appId);
+      if (!app || app.shareEnabled === false) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Shareable app is required' }));
+        return;
+      }
+      const visitor = await createVisitor({ name, appId: app.id });
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ visitor }));
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid request body' }));
+    }
+    return;
+  }
+
+  if (pathname.startsWith('/api/visitors/') && req.method === 'PATCH') {
+    const authSession = getAuthSession(req);
+    if (authSession?.role !== 'owner') {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Owner access required' }));
+      return;
+    }
+    const id = pathname.split('/').pop();
+    let body;
+    try { body = await readBody(req, 10240); } catch {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Bad request' }));
+      return;
+    }
+    try {
+      const updates = JSON.parse(body);
+      if (updates.appId) {
+        const app = await getApp(updates.appId);
+        if (!app || app.shareEnabled === false) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Shareable app is required' }));
+          return;
+        }
+      }
+      const updated = await updateVisitor(id, updates);
+      if (updated) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ visitor: updated }));
+      } else {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Visitor not found' }));
+      }
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid request body' }));
+    }
+    return;
+  }
+
+  if (pathname.startsWith('/api/visitors/') && req.method === 'DELETE') {
+    const authSession = getAuthSession(req);
+    if (authSession?.role !== 'owner') {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Owner access required' }));
+      return;
+    }
+    const id = pathname.split('/').pop();
+    const ok = await deleteVisitor(id);
+    if (ok) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    } else {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Visitor not found' }));
     }
     return;
   }

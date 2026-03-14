@@ -369,6 +369,11 @@ function switchTab(tab, { syncState = true } = {}) {
     void fetchAppsList().catch((error) => {
       console.warn("[apps] Failed to refresh apps for settings:", error.message);
     });
+    if (typeof fetchVisitorsList === "function") {
+      void fetchVisitorsList().catch((error) => {
+        console.warn("[visitors] Failed to refresh visitors for settings:", error.message);
+      });
+    }
   }
   if (syncState) {
     syncBrowserState();

@@ -74,12 +74,17 @@ async function initApp() {
     console.warn("[apps] Failed to load apps:", error.message);
     return [];
   });
+  const visitorsPromise = fetchVisitorsList().catch((error) => {
+    console.warn("[visitors] Failed to load visitors:", error.message);
+    return [];
+  });
 
   await Promise.all([toolsPromise, sessionsPromise]);
   restoreOwnerSessionSelection();
   connect();
   void loadModelsForCurrentTool();
   void appsPromise;
+  void visitorsPromise;
 }
 
 initApp();

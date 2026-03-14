@@ -141,6 +141,11 @@ const shareSnapshotBtn = document.getElementById("shareSnapshotBtn");
 const sidebarFilters = document.getElementById("sidebarFilters");
 const sessionList = document.getElementById("sessionList");
 const sessionListFooter = document.getElementById("sessionListFooter");
+const newVisitorNameInput = document.getElementById("newVisitorNameInput");
+const newVisitorAppSelect = document.getElementById("newVisitorAppSelect");
+const createVisitorBtn = document.getElementById("createVisitorBtn");
+const visitorFormStatus = document.getElementById("visitorFormStatus");
+const settingsVisitorsList = document.getElementById("settingsVisitorsList");
 const settingsAppsList = document.getElementById("settingsAppsList");
 const newAppBtn = document.getElementById("newAppBtn");
 const newSessionBtn = document.getElementById("newSessionBtn");
@@ -252,6 +257,7 @@ let sessions = [];
 let appCatalog = [];
 let sessionAppCatalog = [];
 let availableApps = [];
+let availableVisitors = [];
 let hasLoadedSessions = false;
 let visitorMode = false;
 let visitorSessionId = null;
@@ -757,6 +763,10 @@ function getTemplateApps() {
     isTemplateAppScopeId(app?.id)
     && app?.templateSelectable !== false
   ));
+}
+
+function getShareableTemplateApps() {
+  return getTemplateApps().filter((app) => app?.shareEnabled !== false);
 }
 
 function matchesAppFilter(session, appFilter = activeAppFilter) {

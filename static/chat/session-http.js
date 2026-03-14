@@ -380,7 +380,40 @@ async function fetchAppsList() {
   if (typeof renderSettingsAppsPanel === "function") {
     renderSettingsAppsPanel();
   }
+  if (typeof renderVisitorAppOptions === "function") {
+    renderVisitorAppOptions();
+  }
+  if (typeof renderSettingsVisitorsPanel === "function") {
+    renderSettingsVisitorsPanel();
+  }
   return availableApps;
+}
+
+async function fetchVisitorsList() {
+  if (visitorMode) return [];
+  const data = await fetchJsonOrRedirect("/api/visitors");
+  availableVisitors = Array.isArray(data.visitors) ? data.visitors : [];
+  if (typeof renderSettingsVisitorsPanel === "function") {
+    renderSettingsVisitorsPanel();
+  }
+  return availableVisitors;
+}
+
+async function createVisitorRecord(payload = {}) {
+  const data = await fetchJsonOrRedirect("/api/visitors", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  await fetchVisitorsList();
+  return data.visitor || null;
+}
+
+async function deleteVisitorRecord(visitorId) {
+  await fetchJsonOrRedirect(`/api/visitors/${encodeURIComponent(visitorId)}`, {
+    method: "DELETE",
+  });
+  await fetchVisitorsList();
 }
 
 async function fetchSessionsList() {

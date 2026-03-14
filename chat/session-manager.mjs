@@ -274,6 +274,11 @@ function normalizeSessionSourceName(value) {
   return value.trim().replace(/\s+/g, ' ');
 }
 
+function normalizeSessionVisitorName(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().replace(/\s+/g, ' ');
+}
+
 function isTemplateAppScopeId(appId) {
   const normalized = normalizeAppId(appId);
   return /^app[_-]/i.test(normalized);
@@ -2073,6 +2078,7 @@ export async function createSession(folder, tool, name, extra = {}) {
   const requestedAppName = normalizeSessionAppName(extra.appName);
   const requestedSourceId = normalizeAppId(extra.sourceId);
   const requestedSourceName = normalizeSessionSourceName(extra.sourceName);
+  const requestedVisitorName = normalizeSessionVisitorName(extra.visitorName);
   const created = await withSessionsMetaMutation(async (metas, saveSessionsMeta) => {
     if (externalTriggerId) {
       const existingIndex = metas.findIndex((meta) => meta.externalTriggerId === externalTriggerId && !meta.archived);
@@ -2105,6 +2111,11 @@ export async function createSession(folder, tool, name, extra = {}) {
 
         if (requestedSourceName && updated.sourceName !== requestedSourceName) {
           updated.sourceName = requestedSourceName;
+          changed = true;
+        }
+
+        if (requestedVisitorName && updated.visitorName !== requestedVisitorName) {
+          updated.visitorName = requestedVisitorName;
           changed = true;
         }
 
@@ -2161,6 +2172,7 @@ export async function createSession(folder, tool, name, extra = {}) {
     if (requestedSourceId) session.sourceId = requestedSourceId;
     if (requestedSourceName) session.sourceName = requestedSourceName;
     if (extra.visitorId) session.visitorId = extra.visitorId;
+    if (requestedVisitorName) session.visitorName = requestedVisitorName;
     if (extra.systemPrompt) session.systemPrompt = extra.systemPrompt;
     if (extra.internalRole) session.internalRole = extra.internalRole;
     if (extra.compactsSessionId) session.compactsSessionId = extra.compactsSessionId;

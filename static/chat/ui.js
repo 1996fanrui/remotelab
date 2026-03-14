@@ -514,7 +514,10 @@ function renderSessionScopeContext(session) {
   }
 
   if (activeUserFilter === USER_FILTER_ALL_VALUE || session?.visitorId) {
-    parts.push(`<span title="Session owner scope">${session?.visitorId ? "Visitor" : "Owner"}</span>`);
+    const visitorLabel = typeof session?.visitorName === "string" && session.visitorName.trim()
+      ? `Visitor: ${session.visitorName.trim()}`
+      : (session?.visitorId ? "Visitor" : "Owner");
+    parts.push(`<span title="Session owner scope">${esc(visitorLabel)}</span>`);
   }
 
   return parts;
@@ -845,6 +848,12 @@ function buildAppShareUrl(app) {
   return `${window.location.origin}/app/${encodeURIComponent(shareToken)}`;
 }
 
+function buildVisitorShareUrl(visitor) {
+  const shareToken = typeof visitor?.shareToken === "string" ? visitor.shareToken.trim() : "";
+  if (!shareToken) return "";
+  return `${window.location.origin}/visitor/${encodeURIComponent(shareToken)}`;
+}
+
 function summarizeAppDescription(app) {
   if (app?.id === BASIC_CHAT_TEMPLATE_APP_ID) {
     return "Default normal conversation app for everyday RemoteLab sessions.";
@@ -867,6 +876,11 @@ function getAppKindLabel(app) {
   labels.push(app?.builtin ? "Built-in" : "Custom");
   labels.push(app?.shareEnabled === false ? "Internal" : "Shareable");
   return labels.join(" · ");
+}
+
+function setVisitorFormStatus(message) {
+  if (!visitorFormStatus) return;
+  visitorFormStatus.textContent = message || "";
 }
 
 function setTemporaryButtonText(button, nextText, durationMs = 1400) {
@@ -901,6 +915,88 @@ function createSessionForApp(app, { closeSidebar = true } = {}) {
     sourceName: DEFAULT_APP_NAME,
     appId: app.id,
   });
+}
+
+function getShareableAppCatalogEntry(appId) {
+  const normalized = normalizeAppId(appId);
+  if (!normalized) return null;
+  return getShareableTemplateApps().find((app) => app.id === normalized) || null;
+}
+
+function renderVisitorAppOptions() {
+  if (!newVisitorAppSelect) return;
+  const shareableApps = getShareableTemplateApps();
+  newVisitorAppSelect.innerHTML = "";
+  if (shareableApps.length === 0) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No shareable apps available";
+    newVisitorAppSelect.appendChild(option);
+    newVisitorAppSelect.disabled = true;
+    if (createVisitorBtn) createVisitorBtn.disabled = true;
+    setVisitorFormStatus("Create or enable a shareable app first.");
+    return;
+  }
+  for (const app of shareableApps) {
+    const option = document.createElement("option");
+    option.value = app.id;
+    option.textContent = app.name || app.id;
+    newVisitorAppSelect.appendChild(option);
+  }
+  newVisitorAppSelect.disabled = false;
+  if (createVisitorBtn) createVisitorBtn.disabled = false;
+  if (!newVisitorAppSelect.value || !shareableApps.some((app) => app.id === newVisitorAppSelect.value)) {
+    const preferredApp = shareableApps.find((app) => app.id === "app_video_cut") || shareableApps[0];
+    newVisitorAppSelect.value = preferredApp?.id || "";
+  }
+  setVisitorFormStatus("Each visitor gets a dedicated link and can only use the selected app.");
+}
+
+function focusNewVisitorComposer() {
+  if (typeof switchTab === "function") {
+    switchTab("settings");
+  }
+  openSidebar();
+  if (typeof fetchAppsList === "function") {
+    void fetchAppsList().catch(() => {});
+  }
+  if (typeof fetchVisitorsList === "function") {
+    void fetchVisitorsList().catch(() => {});
+  }
+  window.setTimeout(() => {
+    newVisitorNameInput?.focus();
+    newVisitorNameInput?.select?.();
+  }, 0);
+  return true;
+}
+
+async function handleCreateVisitor() {
+  if (!newVisitorAppSelect || newVisitorAppSelect.disabled) return false;
+  const appId = newVisitorAppSelect.value || "";
+  if (!appId) {
+    setVisitorFormStatus("Choose an app first.");
+    return false;
+  }
+  const name = typeof newVisitorNameInput?.value === "string" ? newVisitorNameInput.value.trim() : "";
+  if (createVisitorBtn) createVisitorBtn.disabled = true;
+  setVisitorFormStatus("Creating visitor…");
+  try {
+    const visitor = await createVisitorRecord({
+      name: name || "New visitor",
+      appId,
+    });
+    if (newVisitorNameInput) {
+      newVisitorNameInput.value = "";
+      newVisitorNameInput.focus();
+    }
+    setVisitorFormStatus(`Created ${visitor?.name || "visitor"}.`);
+    return true;
+  } catch (error) {
+    setVisitorFormStatus(error?.message || "Failed to create visitor.");
+    return false;
+  } finally {
+    if (createVisitorBtn) createVisitorBtn.disabled = false;
+  }
 }
 
 function renderSettingsAppsPanel() {
@@ -997,6 +1093,107 @@ function renderSettingsAppsPanel() {
   }
 }
 
+function renderSettingsVisitorsPanel() {
+  if (!settingsVisitorsList) return;
+  if (visitorMode) {
+    settingsVisitorsList.innerHTML = '<div class="settings-app-empty">Visitors are only available to the owner.</div>';
+    return;
+  }
+
+  settingsVisitorsList.innerHTML = "";
+  const visitors = Array.isArray(availableVisitors) ? availableVisitors : [];
+  if (visitors.length === 0) {
+    settingsVisitorsList.innerHTML = '<div class="settings-app-empty">No visitors yet. Create one above to get a dedicated link.</div>';
+    return;
+  }
+
+  for (const visitor of visitors) {
+    const card = document.createElement("div");
+    card.className = "settings-app-card";
+
+    const header = document.createElement("div");
+    header.className = "settings-app-card-header";
+
+    const name = document.createElement("div");
+    name.className = "settings-app-name";
+    name.textContent = visitor.name || "Unnamed visitor";
+
+    const app = getShareableAppCatalogEntry(visitor.appId);
+    const kind = document.createElement("div");
+    kind.className = "settings-app-kind";
+    kind.textContent = app?.name ? `App · ${app.name}` : "Visitor";
+
+    header.appendChild(name);
+    header.appendChild(kind);
+    card.appendChild(header);
+
+    const description = document.createElement("div");
+    description.className = "settings-app-description";
+    description.textContent = app?.name
+      ? `This link opens ${app.name} for ${visitor.name || "this visitor"}.`
+      : "This visitor link is assigned to a shareable app.";
+    card.appendChild(description);
+
+    const shareUrl = buildVisitorShareUrl(visitor);
+    if (shareUrl) {
+      const link = document.createElement("div");
+      link.className = "settings-app-link";
+      link.textContent = shareUrl;
+      card.appendChild(link);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "settings-app-actions";
+
+    if (shareUrl) {
+      const copyLinkBtn = document.createElement("button");
+      copyLinkBtn.type = "button";
+      copyLinkBtn.className = "settings-app-btn";
+      copyLinkBtn.textContent = "Copy Link";
+      copyLinkBtn.addEventListener("click", async () => {
+        try {
+          if (typeof copyText === "function") {
+            await copyText(shareUrl);
+          } else if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(shareUrl);
+          } else {
+            throw new Error("clipboard unavailable");
+          }
+          setTemporaryButtonText(copyLinkBtn, "Copied");
+        } catch {
+          setTemporaryButtonText(copyLinkBtn, "Copy failed");
+        }
+      });
+      actions.appendChild(copyLinkBtn);
+
+      const openLinkBtn = document.createElement("button");
+      openLinkBtn.type = "button";
+      openLinkBtn.className = "settings-app-btn";
+      openLinkBtn.textContent = "Open Link";
+      openLinkBtn.addEventListener("click", () => {
+        window.open(shareUrl, "_blank", "noopener,noreferrer");
+      });
+      actions.appendChild(openLinkBtn);
+    }
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "settings-app-btn";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.addEventListener("click", async () => {
+      try {
+        await deleteVisitorRecord(visitor.id);
+      } catch (error) {
+        console.warn("[visitors] Failed to delete visitor:", error?.message || error);
+      }
+    });
+    actions.appendChild(deleteBtn);
+
+    card.appendChild(actions);
+    settingsVisitorsList.appendChild(card);
+  }
+}
+
 function createNewSessionShortcut({ closeSidebar = true } = {}) {
   if (closeSidebar && !isDesktop) closeSidebarFn();
   const tool = preferredTool || selectedTool || toolsList[0]?.id;
@@ -1039,7 +1236,17 @@ newAppBtn.addEventListener("click", () => {
 });
 
 newSessionBtn.addEventListener("click", () => {
-  createNewSessionShortcut();
+  focusNewVisitorComposer();
+});
+
+createVisitorBtn?.addEventListener("click", () => {
+  void handleCreateVisitor();
+});
+
+newVisitorNameInput?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  void handleCreateVisitor();
 });
 
 // ---- Image handling ----

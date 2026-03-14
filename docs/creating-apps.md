@@ -27,6 +27,14 @@ If you open the sidebar **Settings** tab, RemoteLab also shows an **Apps** panel
 - copy the public share link for shareable apps like `Video Cut`
 - open that share link directly for testing
 
+RemoteLab also has a lightweight **Visitors** panel for the first round of distribution:
+
+- create a named visitor/user record
+- assign exactly one shareable app to that visitor
+- generate a dedicated visitor link for that person
+
+This lets you keep the product simple in v1: Apps define the workflow, Visitors define who gets which link.
+
 Open a regular session in RemoteLab and tell the AI what App you want in one concentrated message so it can do most of the work without repeated back-and-forth:
 
 > "I want to create an App. It should [describe what it does]."
