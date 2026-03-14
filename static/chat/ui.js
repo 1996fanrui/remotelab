@@ -484,13 +484,12 @@ function renderQueuedMessagePanel(session) {
 }
 
 function renderSessionMessageCount(session) {
-  const total = Number.isInteger(session?.messageCount) ? session.messageCount : 0;
-  const active = Number.isInteger(session?.activeMessageCount)
-    ? session.activeMessageCount
-    : total;
-  if (total <= 0 && active <= 0) return "";
-  const label = `${active} msg${active === 1 ? "" : "s"}`;
-  return `<span class="session-item-count" title="Active messages in the current context">${label}</span>`;
+  const count = Number.isInteger(session?.messageCount)
+    ? session.messageCount
+    : (Number.isInteger(session?.activeMessageCount) ? session.activeMessageCount : 0);
+  if (count <= 0) return "";
+  const label = `${count} msg${count === 1 ? "" : "s"}`;
+  return `<span class="session-item-count" title="Messages in this session">${label}</span>`;
 }
 
 function getWorkflowStatusInfo(value) {
@@ -540,10 +539,12 @@ function getSessionMetaStatusInfo(session) {
 
 function buildSessionMetaParts(session) {
   const parts = [];
-  parts.push(...renderSessionScopeContext(session));
   const countHtml = renderSessionMessageCount(session);
   if (countHtml) parts.push(countHtml);
-  const statusHtml = renderSessionStatusHtml(getSessionMetaStatusInfo(session));
+  const liveStatus = getSessionStatusSummary(session).primary;
+  const statusHtml = liveStatus?.key && liveStatus.key !== "idle"
+    ? renderSessionStatusHtml(liveStatus)
+    : "";
   if (statusHtml) parts.push(statusHtml);
   return parts;
 }
@@ -745,7 +746,7 @@ function createActiveSessionItem(session) {
   div.innerHTML = `
     <div class="session-item-info">
       <div class="session-item-name">${session.pinned ? `<span class="session-pin-badge" title="Pinned">${renderUiIcon("pinned")}</span>` : ""}${esc(displayName)}</div>
-      <div class="session-item-meta">${metaHtml}</div>
+      ${metaHtml ? `<div class="session-item-meta">${metaHtml}</div>` : ""}
     </div>
     <div class="session-item-actions">
       <button class="session-action-btn pin${session.pinned ? " pinned" : ""}" type="button" title="${pinTitle}" aria-label="${pinTitle}" data-id="${session.id}">${renderUiIcon(session.pinned ? "pinned" : "pin")}</button>
@@ -1302,23 +1303,9 @@ async function handleCreateUser() {
     }
     renderUserAppOptions();
     const user = result?.user;
-    if (user?.id) {
-      activeUserFilter = normalizeUserFilter(user.id);
-      persistActiveUserFilter(activeUserFilter);
-      activeSessionAppFilter = normalizeSessionAppFilter(user.defaultAppId || defaultAppId);
-      persistActiveSessionAppFilter(activeSessionAppFilter);
-      refreshAppCatalog();
-      renderSessionList();
-      if (typeof switchTab === "function") {
-        switchTab("sessions");
-      }
-      openSidebar();
-      const targetSession = result?.session || resolveRestoreTargetSession();
-      if (targetSession?.id) {
-        attachSession(targetSession.id, targetSession);
-      }
-    }
-    setUserFormStatus(`Created ${user?.name || "user"}.`);
+    refreshAppCatalog();
+    renderSessionList();
+    setUserFormStatus(`Created ${user?.name || "user"}. Copy a share link below when you are ready.`);
     return true;
   } catch (error) {
     setUserFormStatus(error?.message || "Failed to create user.");
@@ -1326,25 +1313,6 @@ async function handleCreateUser() {
   } finally {
     if (createUserBtn) createUserBtn.disabled = false;
   }
-}
-
-function focusManagedUser(user, { open = true } = {}) {
-  if (!user?.id) return false;
-  activeUserFilter = normalizeUserFilter(user.id);
-  persistActiveUserFilter(activeUserFilter);
-  activeSessionAppFilter = normalizeSessionAppFilter(user.defaultAppId || FILTER_ALL_VALUE);
-  persistActiveSessionAppFilter(activeSessionAppFilter);
-  refreshAppCatalog();
-  renderSessionList();
-  if (typeof switchTab === "function") {
-    switchTab("sessions");
-  }
-  if (open) openSidebar();
-  const target = resolveRestoreTargetSession();
-  if (target?.id) {
-    attachSession(target.id, target);
-  }
-  return true;
 }
 
 function copyShareUrl(shareUrl, button) {
@@ -1362,6 +1330,80 @@ function copyShareUrl(shareUrl, button) {
       setTemporaryButtonText(button, "Copy failed");
     }
   })();
+}
+
+function buildVisitorShareUrl(visitor) {
+  const shareToken = typeof visitor?.shareToken === "string" ? visitor.shareToken.trim() : "";
+  if (!shareToken) return "";
+  return `${window.location.origin}/visitor/${encodeURIComponent(shareToken)}`;
+}
+
+async function ensureUserShareUrl(user) {
+  if (!user?.id) {
+    throw new Error("User not found.");
+  }
+  const appId = user.defaultAppId || user.appIds?.[0] || "";
+  const app = getAppRecordById(appId);
+  if (!app || app.shareEnabled === false) {
+    throw new Error("Choose a shareable default app first.");
+  }
+
+  const visitorPayload = {
+    name: user.name || "New user",
+    appId: app.id,
+  };
+  const existingVisitorId = typeof user.shareVisitorId === "string" ? user.shareVisitorId.trim() : "";
+  let visitor = null;
+
+  if (existingVisitorId) {
+    try {
+      visitor = await updateVisitorRecord(existingVisitorId, visitorPayload);
+    } catch (error) {
+      if (!/Visitor not found/i.test(error?.message || "")) {
+        throw error;
+      }
+    }
+  }
+
+  if (!visitor) {
+    visitor = await createVisitorRecord(visitorPayload);
+    if (visitor?.id) {
+      await updateUserRecord(user.id, { shareVisitorId: visitor.id });
+    }
+  }
+
+  const shareUrl = buildVisitorShareUrl(visitor);
+  if (!shareUrl) {
+    throw new Error("Failed to build share link.");
+  }
+  return shareUrl;
+}
+
+async function patchManagedUser(user, updates, {
+  statusEl = null,
+  pendingText = "Saving…",
+  successText = "Saved.",
+  onSuccess = null,
+} = {}) {
+  if (!user?.id) return null;
+  if (statusEl) {
+    statusEl.textContent = pendingText;
+  }
+  try {
+    const updated = await updateUserRecord(user.id, updates);
+    if (statusEl) {
+      statusEl.textContent = successText;
+    }
+    if (typeof onSuccess === "function") {
+      onSuccess(updated);
+    }
+    return updated;
+  } catch (error) {
+    if (statusEl) {
+      statusEl.textContent = error?.message || "Failed to save user.";
+    }
+    return null;
+  }
 }
 
 async function handleCreateApp() {
@@ -1388,10 +1430,13 @@ async function handleCreateApp() {
     if (newAppWelcomeInput) newAppWelcomeInput.value = "";
     if (newAppSystemPromptInput) newAppSystemPromptInput.value = "";
     renderAppToolSelectOptions(newAppToolSelect);
-    activeSessionAppFilter = normalizeSessionAppFilter(app?.id || FILTER_ALL_VALUE);
-    persistActiveSessionAppFilter(activeSessionAppFilter);
     refreshAppCatalog();
-    setAppFormStatus(`Created ${app?.name || "app"}.`);
+    const shareUrl = buildAppShareUrl(app);
+    setAppFormStatus(
+      shareUrl
+        ? `Created ${app?.name || "app"}. Use Copy Link below to share it.`
+        : `Created ${app?.name || "app"}.`,
+    );
     return true;
   } catch (error) {
     setAppFormStatus(error?.message || "Failed to create app.");
@@ -1524,15 +1569,6 @@ function renderSettingsAppsPanel() {
       });
       actions.appendChild(saveBtn);
 
-      const openSessionBtn = document.createElement("button");
-      openSessionBtn.type = "button";
-      openSessionBtn.className = "settings-app-btn";
-      openSessionBtn.textContent = "Open Session";
-      openSessionBtn.addEventListener("click", () => {
-        createSessionForApp(app, { principal: getAdminSessionPrincipal() });
-      });
-      actions.appendChild(openSessionBtn);
-
       const deleteBtn = document.createElement("button");
       deleteBtn.type = "button";
       deleteBtn.className = "settings-app-btn";
@@ -1568,15 +1604,6 @@ function renderSettingsAppsPanel() {
     const actions = document.createElement("div");
     actions.className = "settings-app-actions";
 
-    const openSessionBtn = document.createElement("button");
-    openSessionBtn.type = "button";
-    openSessionBtn.className = "settings-app-btn";
-    openSessionBtn.textContent = "Open Session";
-    openSessionBtn.addEventListener("click", () => {
-      createSessionForApp(app, { principal: getAdminSessionPrincipal() });
-    });
-    actions.appendChild(openSessionBtn);
-
     if (shareUrl) {
       const copyLinkBtn = document.createElement("button");
       copyLinkBtn.type = "button";
@@ -1586,15 +1613,6 @@ function renderSettingsAppsPanel() {
         void copyShareUrl(shareUrl, copyLinkBtn);
       });
       actions.appendChild(copyLinkBtn);
-
-      const openLinkBtn = document.createElement("button");
-      openLinkBtn.type = "button";
-      openLinkBtn.className = "settings-app-btn";
-      openLinkBtn.textContent = "Open Link";
-      openLinkBtn.addEventListener("click", () => {
-        window.open(shareUrl, "_blank", "noopener,noreferrer");
-      });
-      actions.appendChild(openLinkBtn);
     }
 
     card.appendChild(actions);
@@ -1707,67 +1725,86 @@ function renderSettingsUsersPanel() {
 
     const inlineStatus = document.createElement("div");
     inlineStatus.className = "settings-app-empty inline-status";
-    inlineStatus.textContent = "Each user can keep multiple apps, but starts from one default app.";
+    inlineStatus.textContent = "Changes save immediately. Copy the share link when you are ready to send this user out.";
     editor.appendChild(inlineStatus);
     card.appendChild(editor);
+
+    nameInput.addEventListener("change", async () => {
+      const nextName = nameInput.value.trim();
+      if (!nextName || nextName === user.name) {
+        nameInput.value = user.name || "";
+        return;
+      }
+      const updated = await patchManagedUser(user, { name: nextName }, {
+        statusEl: inlineStatus,
+        successText: `Saved ${nextName}.`,
+      });
+      if (updated?.name) {
+        user.name = updated.name;
+        nameInput.value = updated.name;
+      }
+    });
+
+    defaultSelect.addEventListener("change", async () => {
+      const nextDefaultAppId = defaultSelect.value || user.defaultAppId || "";
+      if (!nextDefaultAppId || nextDefaultAppId === user.defaultAppId) return;
+      const updated = await patchManagedUser(user, { defaultAppId: nextDefaultAppId }, {
+        statusEl: inlineStatus,
+        successText: "Default app updated.",
+      });
+      if (updated?.defaultAppId) {
+        user.defaultAppId = updated.defaultAppId;
+        defaultSelect.value = updated.defaultAppId;
+      }
+    });
+
+    chipGrid.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+      checkbox.addEventListener("change", async () => {
+        const appIds = [...chipGrid.querySelectorAll('input[type="checkbox"]:checked')].map((input) => input.value);
+        if (appIds.length === 0) {
+          checkbox.checked = true;
+          syncDefaultOptions();
+          inlineStatus.textContent = "Choose at least one app.";
+          return;
+        }
+        syncDefaultOptions();
+        const nextDefaultAppId = defaultSelect.value || appIds[0];
+        const updated = await patchManagedUser(user, {
+          appIds,
+          defaultAppId: nextDefaultAppId,
+        }, {
+          statusEl: inlineStatus,
+          successText: "Allowed apps updated.",
+        });
+        if (updated) {
+          user.appIds = Array.isArray(updated.appIds) ? updated.appIds : appIds;
+          user.defaultAppId = updated.defaultAppId || nextDefaultAppId;
+          syncDefaultOptions();
+        }
+      });
+    });
 
     const actions = document.createElement("div");
     actions.className = "settings-app-actions";
 
-    const saveBtn = document.createElement("button");
-    saveBtn.type = "button";
-    saveBtn.className = "settings-app-btn";
-    saveBtn.textContent = "Save";
-    saveBtn.addEventListener("click", async () => {
-      const appIds = [...chipGrid.querySelectorAll('input[type="checkbox"]:checked')].map((input) => input.value);
-      if (appIds.length === 0) {
-        inlineStatus.textContent = "Choose at least one app.";
-        return;
-      }
-      saveBtn.disabled = true;
-      inlineStatus.textContent = "Saving…";
+    const copyLinkBtn = document.createElement("button");
+    copyLinkBtn.type = "button";
+    copyLinkBtn.className = "settings-app-btn";
+    copyLinkBtn.textContent = "Copy Share Link";
+    copyLinkBtn.addEventListener("click", async () => {
+      copyLinkBtn.disabled = true;
+      inlineStatus.textContent = "Preparing share link…";
       try {
-        const updated = await updateUserRecord(user.id, {
-          name: nameInput.value,
-          appIds,
-          defaultAppId: defaultSelect.value || appIds[0],
-        });
-        inlineStatus.textContent = `Saved ${updated?.name || "user"}.`;
+        const shareUrl = await ensureUserShareUrl(user);
+        await copyShareUrl(shareUrl, copyLinkBtn);
+        inlineStatus.textContent = "Share link copied.";
       } catch (error) {
-        inlineStatus.textContent = error?.message || "Failed to save user.";
+        inlineStatus.textContent = error?.message || "Failed to prepare share link.";
       } finally {
-        saveBtn.disabled = false;
+        copyLinkBtn.disabled = false;
       }
     });
-    actions.appendChild(saveBtn);
-
-    const focusBtn = document.createElement("button");
-    focusBtn.type = "button";
-    focusBtn.className = "settings-app-btn";
-    focusBtn.textContent = "Focus Sessions";
-    focusBtn.addEventListener("click", () => {
-      focusManagedUser(user);
-    });
-    actions.appendChild(focusBtn);
-
-    const newSessionBtn = document.createElement("button");
-    newSessionBtn.type = "button";
-    newSessionBtn.className = "settings-app-btn";
-    newSessionBtn.textContent = "New Session";
-    newSessionBtn.addEventListener("click", () => {
-      const principal = getPrincipalForUser(user);
-      const appId = resolveAppIdForPrincipal(principal, user.defaultAppId || activeSessionAppFilter);
-      const app = getAppRecordById(appId);
-      if (app) {
-        activeUserFilter = normalizeUserFilter(user.id);
-        persistActiveUserFilter(activeUserFilter);
-        activeSessionAppFilter = normalizeSessionAppFilter(app.id);
-        persistActiveSessionAppFilter(activeSessionAppFilter);
-        refreshAppCatalog();
-        createSessionForApp(app, { principal });
-      }
-    });
-    actions.appendChild(newSessionBtn);
+    actions.appendChild(copyLinkBtn);
 
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
@@ -1805,16 +1842,7 @@ function createNewSessionShortcut({ closeSidebar = true } = {}) {
 }
 
 function createNewAppShortcut({ closeSidebar = true } = {}) {
-  const app = getAppRecordById(CREATE_APP_TEMPLATE_APP_ID);
-  if (!app) return false;
-  const principal = getAdminSessionPrincipal();
-  activeUserFilter = normalizeUserFilter(ADMIN_USER_FILTER_VALUE);
-  persistActiveUserFilter(activeUserFilter);
-  activeSessionAppFilter = normalizeSessionAppFilter(app.id);
-  persistActiveSessionAppFilter(activeSessionAppFilter);
-  refreshAppCatalog();
-  renderSessionList();
-  return createSessionForApp(app, { closeSidebar, principal });
+  return focusNewAppComposer({ closeSidebar });
 }
 
 menuBtn.addEventListener("click", openSidebar);

@@ -223,6 +223,23 @@ try {
     assert.deepEqual(updatedUser.json?.user?.appIds, ['app_basic_chat']);
     assert.equal(updatedUser.json?.user?.defaultAppId, 'app_basic_chat');
 
+    const visitorCreate = await request(port, 'POST', '/api/visitors', {
+      name: 'Judge iPhone 2',
+      appId: 'app_video_cut',
+    }, {
+      Cookie: ownerCookie,
+    });
+    assert.equal(visitorCreate.status, 201, 'owner should be able to create a visitor share link');
+    assert.ok(visitorCreate.json?.visitor?.id, 'visitor share link should include an id');
+
+    const userSharePatch = await request(port, 'PATCH', `/api/users/${createUser.json.user.id}`, {
+      shareVisitorId: visitorCreate.json.visitor.id,
+    }, {
+      Cookie: ownerCookie,
+    });
+    assert.equal(userSharePatch.status, 200, 'owner should be able to attach a share visitor to a user');
+    assert.equal(userSharePatch.json?.user?.shareVisitorId, visitorCreate.json.visitor.id);
+
     const blockedSession = await request(port, 'POST', '/api/sessions', {
       folder: repoRoot,
       tool: 'fake-codex',
@@ -256,6 +273,16 @@ try {
       Cookie: ownerCookie,
     });
     assert.equal(deleteUser.status, 200, 'owner should be able to delete a managed user');
+
+    const visitorListAfterDelete = await request(port, 'GET', '/api/visitors', null, {
+      Cookie: ownerCookie,
+    });
+    assert.equal(visitorListAfterDelete.status, 200, 'owner should still be able to list visitors after deleting a user');
+    assert.equal(
+      (visitorListAfterDelete.json?.visitors || []).some((visitor) => visitor.id === visitorCreate.json?.visitor?.id),
+      false,
+      'deleting a user should also clean up its linked share visitor',
+    );
 
     const finalUsers = await request(port, 'GET', '/api/users', null, {
       Cookie: ownerCookie,

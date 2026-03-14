@@ -45,50 +45,15 @@ function extractFunctionSource(source, functionName) {
 
 const createNewAppShortcutSource = extractFunctionSource(uiSource, 'createNewAppShortcut');
 
-function createHarness({ app = { id: 'app_create_app', name: 'Create App' }, createResult = true } = {}) {
+function createHarness({ focusResult = true } = {}) {
   const state = {
-    userPersists: [],
-    appPersists: [],
-    refreshCalls: 0,
-    renderCalls: 0,
-    createCalls: [],
-    activeUserFilter: 'user_old',
-    activeSessionAppFilter: 'app_old',
+    focusCalls: [],
   };
   const context = {
     console,
-    CREATE_APP_TEMPLATE_APP_ID: 'app_create_app',
-    ADMIN_USER_FILTER_VALUE: 'admin',
-    activeUserFilter: state.activeUserFilter,
-    activeSessionAppFilter: state.activeSessionAppFilter,
-    getAppRecordById(appId) {
-      state.requestedAppId = appId;
-      return app;
-    },
-    getAdminSessionPrincipal() {
-      return { kind: 'owner', id: 'admin', name: 'Admin' };
-    },
-    normalizeUserFilter(value) {
-      return `user:${value}`;
-    },
-    persistActiveUserFilter(value) {
-      state.userPersists.push(value);
-    },
-    normalizeSessionAppFilter(value) {
-      return `app:${value}`;
-    },
-    persistActiveSessionAppFilter(value) {
-      state.appPersists.push(value);
-    },
-    refreshAppCatalog() {
-      state.refreshCalls += 1;
-    },
-    renderSessionList() {
-      state.renderCalls += 1;
-    },
-    createSessionForApp(nextApp, options) {
-      state.createCalls.push({ app: nextApp, options });
-      return createResult;
+    focusNewAppComposer(options) {
+      state.focusCalls.push(options);
+      return focusResult;
     },
   };
   context.globalThis = context;
@@ -101,32 +66,20 @@ globalThis.createNewAppShortcut = createNewAppShortcut;`, context, {
 
 const successHarness = createHarness();
 const successResult = successHarness.context.createNewAppShortcut();
-assert.equal(successResult, true, 'new app shortcut should return the created session result');
-assert.equal(successHarness.state.requestedAppId, 'app_create_app', 'new app shortcut should target the built-in Create App starter');
-assert.equal(successHarness.context.activeUserFilter, 'user:admin', 'new app shortcut should switch back to the owner/admin scope');
-assert.equal(successHarness.context.activeSessionAppFilter, 'app:app_create_app', 'new app shortcut should switch the app filter to Create App');
-assert.deepEqual(successHarness.state.userPersists, ['user:admin'], 'new app shortcut should persist the owner filter');
-assert.deepEqual(successHarness.state.appPersists, ['app:app_create_app'], 'new app shortcut should persist the Create App filter');
-assert.equal(successHarness.state.refreshCalls, 1, 'new app shortcut should refresh the app catalog before creating the session');
-assert.equal(successHarness.state.renderCalls, 1, 'new app shortcut should rerender the session list before creating the session');
-assert.equal(successHarness.state.createCalls.length, 1, 'new app shortcut should create exactly one session');
+assert.equal(successResult, true, 'new app shortcut should return the settings focus result');
 assert.equal(
-  JSON.stringify(successHarness.state.createCalls[0]),
-  JSON.stringify({
-    app: { id: 'app_create_app', name: 'Create App' },
-    options: {
-      closeSidebar: true,
-      principal: { kind: 'owner', id: 'admin', name: 'Admin' },
-    },
-  }),
-  'new app shortcut should behave like a normal Create App owner session launch',
+  JSON.stringify(successHarness.state.focusCalls),
+  JSON.stringify([{ closeSidebar: true }]),
+  'new app shortcut should open the settings-side app composer instead of creating a chat session',
 );
 
-const missingHarness = createHarness({ app: null, createResult: false });
+const missingHarness = createHarness({ focusResult: false });
 const missingResult = missingHarness.context.createNewAppShortcut();
-assert.equal(missingResult, false, 'new app shortcut should fail cleanly when the starter app is unavailable');
-assert.equal(missingHarness.state.createCalls.length, 0, 'missing starter app should not attempt to create a session');
-assert.deepEqual(missingHarness.state.userPersists, [], 'missing starter app should not mutate filters');
-assert.deepEqual(missingHarness.state.appPersists, [], 'missing starter app should not mutate the app filter');
+assert.equal(missingResult, false, 'new app shortcut should fail cleanly when the settings focus fails');
+assert.equal(
+  JSON.stringify(missingHarness.state.focusCalls),
+  JSON.stringify([{ closeSidebar: true }]),
+  'new app shortcut should delegate to the settings composer even on failure',
+);
 
 console.log('test-chat-new-app-shortcut: ok');

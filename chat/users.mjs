@@ -35,12 +35,14 @@ function normalizeUserRecord(user) {
   const id = typeof user.id === 'string' ? user.id.trim() : '';
   if (!id) return null;
   const appIds = normalizeUserAppIds(user.appIds);
+  const shareVisitorId = typeof user.shareVisitorId === 'string' ? user.shareVisitorId.trim() : '';
   return {
     ...user,
     id,
     name: normalizeUserName(user.name) || 'New user',
     appIds: appIds.length > 0 ? appIds : [BASIC_CHAT_APP_ID],
     defaultAppId: normalizeDefaultAppId(user.defaultAppId, appIds.length > 0 ? appIds : [BASIC_CHAT_APP_ID]),
+    shareVisitorId,
     createdAt: typeof user.createdAt === 'string' && user.createdAt.trim()
       ? user.createdAt.trim()
       : new Date().toISOString(),
@@ -116,6 +118,11 @@ export async function updateUser(id, updates = {}) {
       updates.defaultAppId === undefined ? users[index].defaultAppId : updates.defaultAppId,
       users[index].appIds,
     );
+    if (Object.prototype.hasOwnProperty.call(updates, 'shareVisitorId')) {
+      users[index].shareVisitorId = typeof updates.shareVisitorId === 'string'
+        ? updates.shareVisitorId.trim()
+        : '';
+    }
     users[index].updatedAt = new Date().toISOString();
     await saveUsers(users);
     return cloneUser(users[index]);
