@@ -197,7 +197,9 @@ async function main() {
       'visitor page should inline auth bootstrap data from the server render',
     );
     assert.match(page.text, /<script src="\/chat\/init\.js(?:\?v=[^"]*)?"/);
-    assert.match(page.text, /id="appFilterSelect"/);
+    assert.doesNotMatch(page.text, /id="appFilterSelect"/);
+    assert.doesNotMatch(page.text, /id="sessionAppFilterSelect"/);
+    assert.doesNotMatch(page.text, /id="userFilterSelect"/);
     assert.match(page.text, /id="newAppBtn"/);
     assert.match(page.text, /id="settingsAppsList"/);
     assert.match(page.text, /id="settingsVisitorsList"/);

@@ -770,21 +770,15 @@ function getShareableTemplateApps() {
 }
 
 function matchesAppFilter(session, appFilter = activeAppFilter) {
-  return (
-    appFilter === APP_FILTER_ALL_VALUE
-    || getEffectiveSessionSourceId(session) === appFilter
-  );
+  return true;
 }
 
 function matchesSessionAppFilter(session, appFilter = activeSessionAppFilter) {
-  return (
-    appFilter === APP_FILTER_ALL_VALUE
-    || getEffectiveSessionTemplateAppId(session) === appFilter
-  );
+  return true;
 }
 
 function matchesUserFilter(session, scope = activeUserFilter) {
-  return scope === USER_FILTER_ALL_VALUE || !session?.visitorId;
+  return true;
 }
 
 function matchesCurrentFilters(session) {
@@ -831,8 +825,7 @@ function shouldShowUserFilter() {
 
 function syncSidebarFiltersVisibility(showingSessions = true) {
   if (!sidebarFilters) return;
-  const shouldShowAnyFilter = shouldShowAppFilter() || shouldShowSessionAppFilter() || shouldShowUserFilter();
-  sidebarFilters.classList.toggle("hidden", !showingSessions || !shouldShowAnyFilter);
+  sidebarFilters.classList.add("hidden");
 }
 
 function renderAppFilterOptions() {

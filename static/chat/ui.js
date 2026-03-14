@@ -513,7 +513,7 @@ function renderSessionScopeContext(session) {
     parts.push(`<span title="Session app">App: ${esc(appName)}</span>`);
   }
 
-  if (activeUserFilter === USER_FILTER_ALL_VALUE || session?.visitorId) {
+  if (session?.visitorId) {
     const visitorLabel = typeof session?.visitorName === "string" && session.visitorName.trim()
       ? `Visitor: ${session.visitorName.trim()}`
       : (session?.visitorId ? "Visitor" : "Owner");
@@ -524,14 +524,7 @@ function renderSessionScopeContext(session) {
 }
 
 function getFilteredSessionEmptyText({ archived = false } = {}) {
-  const base = archived ? "No archived sessions" : "No sessions yet";
-  if (
-    activeAppFilter === APP_FILTER_ALL_VALUE
-    && activeSessionAppFilter === APP_FILTER_ALL_VALUE
-  ) {
-    return base;
-  }
-  return archived ? "No matching archived sessions" : "No matching sessions";
+  return archived ? "No archived sessions" : "No sessions yet";
 }
 
 function getSessionGroupInfo(session) {
@@ -1198,15 +1191,13 @@ function createNewSessionShortcut({ closeSidebar = true } = {}) {
   if (closeSidebar && !isDesktop) closeSidebarFn();
   const tool = preferredTool || selectedTool || toolsList[0]?.id;
   if (!tool) return false;
-  const sourceId = activeAppFilter !== APP_FILTER_ALL_VALUE ? activeAppFilter : DEFAULT_APP_ID;
-  const sourceName = getAppCatalogEntry(sourceId)?.name || DEFAULT_APP_NAME;
   return dispatchAction({
     action: "create",
     folder: "~",
     tool,
-    sourceId,
-    sourceName,
-    appId: activeSessionAppFilter !== APP_FILTER_ALL_VALUE ? activeSessionAppFilter : BASIC_CHAT_TEMPLATE_APP_ID,
+    sourceId: DEFAULT_APP_ID,
+    sourceName: DEFAULT_APP_NAME,
+    appId: BASIC_CHAT_TEMPLATE_APP_ID,
   });
 }
 
@@ -1236,7 +1227,7 @@ newAppBtn.addEventListener("click", () => {
 });
 
 newSessionBtn.addEventListener("click", () => {
-  focusNewVisitorComposer();
+  createNewSessionShortcut();
 });
 
 createVisitorBtn?.addEventListener("click", () => {

@@ -418,8 +418,7 @@ async function deleteVisitorRecord(visitorId) {
 
 async function fetchSessionsList() {
   if (visitorMode) return [];
-  const query = activeUserFilter === USER_FILTER_ALL_VALUE ? "?includeVisitor=1" : "";
-  const data = await fetchJsonOrRedirect(`/api/sessions${query}`);
+  const data = await fetchJsonOrRedirect('/api/sessions?includeVisitor=1');
   const previousMap = new Map(sessions.map((session) => [session.id, session]));
   sessions = (data.sessions || []).map((session) => normalizeSessionRecord(session, previousMap.get(session.id) || null));
   hasLoadedSessions = true;
