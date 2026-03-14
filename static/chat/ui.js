@@ -548,6 +548,14 @@ function buildSessionMetaParts(session) {
   return parts;
 }
 
+function buildBoardCardMetaParts(session) {
+  const parts = [];
+  parts.push(...renderSessionScopeContext(session));
+  const statusHtml = renderSessionStatusHtml(getSessionMetaStatusInfo(session));
+  if (statusHtml) parts.push(statusHtml);
+  return parts;
+}
+
 function renderSessionScopeContext(session) {
   const parts = [];
   const sourceName = typeof getEffectiveSessionSourceName === "function"
@@ -625,12 +633,22 @@ function formatBoardSessionTimestamp(session) {
   return messageTimeFormatter.format(parsed);
 }
 
+function renderBoardPriorityPill(priorityInfo) {
+  if (!priorityInfo?.label) return "";
+  const title = priorityInfo.title ? ` title="${esc(priorityInfo.title)}"` : "";
+  const className = priorityInfo.className ? ` ${priorityInfo.className}` : "";
+  return `<span class="board-priority-pill${className}"${title}>${esc(priorityInfo.label)}</span>`;
+}
+
 function createBoardSessionCard(session) {
+  const priorityInfo = getSessionBoardPriority(session);
   const card = document.createElement("div");
-  card.className = "board-card" + (session.id === currentSessionId ? " active" : "");
+  card.className = "board-card"
+    + (priorityInfo?.className ? ` ${priorityInfo.className}` : "")
+    + (session.id === currentSessionId ? " active" : "");
 
   const displayName = getSessionDisplayName(session);
-  const metaParts = buildSessionMetaParts(session);
+  const metaParts = buildBoardCardMetaParts(session);
 
   const description = typeof session?.description === "string"
     ? session.description.trim()
@@ -638,10 +656,13 @@ function createBoardSessionCard(session) {
   const timestamp = formatBoardSessionTimestamp(session);
 
   card.innerHTML = `
+    <div class="board-card-topline">
+      ${renderBoardPriorityPill(priorityInfo)}
+      ${timestamp ? `<div class="board-card-time">Updated ${esc(timestamp)}</div>` : ""}
+    </div>
     <div class="board-card-title">${session.pinned ? `<span class="session-pin-badge" title="Pinned">${renderUiIcon("pinned")}</span>` : ""}${esc(displayName)}</div>
     ${metaParts.length > 0 ? `<div class="board-card-meta">${metaParts.join(" · ")}</div>` : ""}
-    ${description ? `<div class="board-card-description">${esc(description)}</div>` : ""}
-    ${timestamp ? `<div class="board-card-time">Updated ${esc(timestamp)}</div>` : ""}`;
+    ${description ? `<div class="board-card-description">${esc(description)}</div>` : ""}`;
 
   card.addEventListener("click", () => {
     attachSession(session.id, session);
@@ -672,6 +693,8 @@ function renderSessionBoard() {
   }
 
   for (const { column, sessions: columnSessions } of grouped.values()) {
+    columnSessions.sort(compareBoardSessions);
+    const highPriorityCount = columnSessions.filter((session) => getSessionBoardPriority(session)?.key === "high").length;
     const columnEl = document.createElement("div");
     columnEl.className = "board-column";
     columnEl.dataset.column = column.key;
@@ -681,6 +704,7 @@ function renderSessionBoard() {
     header.innerHTML = `
       <span class="board-column-dot"></span>
       <span class="board-column-title" title="${esc(column.title || column.label)}">${esc(column.label)}</span>
+      ${highPriorityCount > 0 ? `<span class="board-column-attention">${highPriorityCount} high</span>` : ""}
       <span class="board-column-count">${columnSessions.length}</span>`;
 
     const body = document.createElement("div");

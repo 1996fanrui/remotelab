@@ -7,7 +7,10 @@ import {
   statOrNull,
   writeJsonAtomic,
 } from './fs-utils.mjs';
-import { normalizeSessionWorkflowState } from './session-workflow-state.mjs';
+import {
+  normalizeSessionWorkflowPriority,
+  normalizeSessionWorkflowState,
+} from './session-workflow-state.mjs';
 
 let sessionsMetaCache = null;
 let sessionsMetaCacheMtimeMs = null;
@@ -37,6 +40,19 @@ function normalizeStoredSessionMeta(meta) {
       }
     } else {
       delete normalized.workflowState;
+      changed = true;
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(normalized, 'workflowPriority')) {
+    const nextWorkflowPriority = normalizeSessionWorkflowPriority(normalized.workflowPriority || '');
+    if (nextWorkflowPriority) {
+      if (normalized.workflowPriority !== nextWorkflowPriority) {
+        normalized.workflowPriority = nextWorkflowPriority;
+        changed = true;
+      }
+    } else {
+      delete normalized.workflowPriority;
       changed = true;
     }
   }

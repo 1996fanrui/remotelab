@@ -224,6 +224,8 @@ async function main() {
     assert.match(page.text, /--keyboard-inset-height:\s*0px/);
     assert.match(page.text, /--sidebar-width-expanded:\s*min\(80vw, calc\(100vw - 240px\)\);/);
     assert.match(page.text, /body\.board-tab-expanded\s*\{[\s\S]*?--sidebar-width:\s*var\(--sidebar-width-expanded\);/, 'desktop board hover mode should widen the sidebar via CSS variables');
+    assert.match(page.text, /\.board-column-attention\s*\{[\s\S]*?border-radius:\s*999px;/, 'board columns should surface a compact high-priority count');
+    assert.match(page.text, /\.board-priority-pill\s*\{[\s\S]*?border-radius:\s*999px;/, 'board cards should render compact priority pills');
     assert.match(page.text, /\.app-shell\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?grid-template-rows:\s*auto minmax\(0, 1fr\);/, 'app shell should reserve a fixed header row and a flexible body row');
     assert.match(page.text, /\.app-container\s*\{[\s\S]*?min-height:\s*0;/);
     assert.match(page.text, /\.chat-area\s*\{[\s\S]*?grid-template-rows:\s*minmax\(0, 1fr\) auto auto;[\s\S]*?min-height:\s*0;/, 'chat area should model content, queued panel, and composer as explicit rows');

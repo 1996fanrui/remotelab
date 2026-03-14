@@ -32,10 +32,13 @@ import {
   setSessionArchived,
   setSessionPinned,
   submitHttpMessage,
-  updateSessionWorkflowState,
+  updateSessionWorkflowClassification,
   updateSessionRuntimePreferences,
 } from './session-manager.mjs';
-import { normalizeSessionWorkflowState } from './session-workflow-state.mjs';
+import {
+  normalizeSessionWorkflowPriority,
+  normalizeSessionWorkflowState,
+} from './session-workflow-state.mjs';
 import { appendEvent, readEventBody } from './history.mjs';
 import { messageEvent } from './normalizer.mjs';
 import { getPublicKey, addSubscription } from './push.mjs';
@@ -1116,6 +1119,7 @@ export async function handleRequest(req, res) {
     const hasEffortPatch = Object.prototype.hasOwnProperty.call(patch || {}, 'effort');
     const hasThinkingPatch = Object.prototype.hasOwnProperty.call(patch || {}, 'thinking');
     const hasWorkflowStatePatch = Object.prototype.hasOwnProperty.call(patch || {}, 'workflowState');
+    const hasWorkflowPriorityPatch = Object.prototype.hasOwnProperty.call(patch || {}, 'workflowPriority');
     if (hasArchivedPatch && typeof patch.archived !== 'boolean') {
       writeJson(res, 400, { error: 'archived must be a boolean' });
       return;
@@ -1144,6 +1148,10 @@ export async function handleRequest(req, res) {
       writeJson(res, 400, { error: 'workflowState must be a string or null' });
       return;
     }
+    if (hasWorkflowPriorityPatch && patch.workflowPriority !== null && typeof patch.workflowPriority !== 'string') {
+      writeJson(res, 400, { error: 'workflowPriority must be a string or null' });
+      return;
+    }
     if (
       hasWorkflowStatePatch
       && patch.workflowState !== null
@@ -1151,6 +1159,15 @@ export async function handleRequest(req, res) {
       && !normalizeSessionWorkflowState(String(patch.workflowState))
     ) {
       writeJson(res, 400, { error: 'workflowState must be parked, waiting_user, or done' });
+      return;
+    }
+    if (
+      hasWorkflowPriorityPatch
+      && patch.workflowPriority !== null
+      && String(patch.workflowPriority).trim()
+      && !normalizeSessionWorkflowPriority(String(patch.workflowPriority))
+    ) {
+      writeJson(res, 400, { error: 'workflowPriority must be high, medium, or low' });
       return;
     }
     let session = null;
@@ -1163,8 +1180,11 @@ export async function handleRequest(req, res) {
     if (hasPinnedPatch) {
       session = await setSessionPinned(sessionId, patch.pinned) || session;
     }
-    if (hasWorkflowStatePatch) {
-      session = await updateSessionWorkflowState(sessionId, patch.workflowState || '') || session;
+    if (hasWorkflowStatePatch || hasWorkflowPriorityPatch) {
+      session = await updateSessionWorkflowClassification(sessionId, {
+        ...(hasWorkflowStatePatch ? { workflowState: patch.workflowState || '' } : {}),
+        ...(hasWorkflowPriorityPatch ? { workflowPriority: patch.workflowPriority || '' } : {}),
+      }) || session;
     }
     if (hasToolPatch || hasModelPatch || hasEffortPatch || hasThinkingPatch) {
       session = await updateSessionRuntimePreferences(sessionId, {

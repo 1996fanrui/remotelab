@@ -379,6 +379,24 @@ function getSessionBoardColumn(session) {
     };
 }
 
+function getSessionBoardPriority(session) {
+  return typeof sessionStateModel.getSessionBoardPriority === "function"
+    ? sessionStateModel.getSessionBoardPriority(session)
+    : {
+      key: "medium",
+      label: "Medium",
+      rank: 2,
+      className: "board-priority-medium",
+      title: "Worth checking soon, but not urgent.",
+    };
+}
+
+function compareBoardSessions(a, b) {
+  return typeof sessionStateModel.compareBoardSessions === "function"
+    ? sessionStateModel.compareBoardSessions(a, b)
+    : 0;
+}
+
 function refreshSessionAttentionUi(sessionId = currentSessionId) {
   if (typeof renderSessionList === "function") {
     renderSessionList();

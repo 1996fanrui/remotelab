@@ -365,6 +365,15 @@ body {
   border-radius: 999px;
   padding: 2px 7px;
 }
+.board-column-attention {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--warning);
+  background: rgba(191, 90, 42, 0.08);
+  border: 1px solid rgba(191, 90, 42, 0.18);
+  border-radius: 999px;
+  padding: 2px 7px;
+}
 .board-column-body {
   flex: 1;
   min-height: 0;
@@ -383,6 +392,12 @@ body {
   background: var(--bg);
   cursor: pointer;
 }
+.board-card.board-priority-high {
+  border-color: rgba(191, 90, 42, 0.32);
+}
+.board-card.board-priority-medium {
+  border-color: rgba(10, 132, 255, 0.24);
+}
 .board-card:hover {
   background: var(--surface-hover);
   border-color: var(--border-strong);
@@ -390,6 +405,12 @@ body {
 .board-card.active {
   border-color: var(--border-strong);
   background: var(--bg-tertiary);
+}
+.board-card-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 .board-card-title {
   font-size: 13px;
@@ -399,6 +420,32 @@ body {
 }
 .board-card-title .session-pin-badge {
   margin-right: 4px;
+}
+.board-priority-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.board-priority-pill.board-priority-high {
+  color: var(--warning);
+  border-color: rgba(191, 90, 42, 0.28);
+  background: rgba(191, 90, 42, 0.08);
+}
+.board-priority-pill.board-priority-medium {
+  color: var(--accent);
+  border-color: rgba(10, 132, 255, 0.22);
+  background: rgba(10, 132, 255, 0.08);
+}
+.board-priority-pill.board-priority-low {
+  color: var(--text-muted);
+  border-color: var(--border);
+  background: var(--bg-secondary);
 }
 .board-card-meta,
 .board-card-time,
@@ -416,6 +463,10 @@ body {
   font-size: 12px;
   color: var(--text-secondary);
   line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .board-card-empty {
   padding: 8px 2px;
@@ -580,12 +631,6 @@ body {
   margin-top: 6px;
   color: var(--text-muted);
   font-size: 11px;
-}
-.settings-placeholder {
-  margin-top: 16px;
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.45;
 }
 
 .pinned-section { margin-bottom: 8px; }
@@ -1704,7 +1749,6 @@ body.visitor-mode .gesture-pill { display: none !important; }
             <div class="settings-app-empty">Loading apps…</div>
           </div>
         </div>
-        <div class="settings-placeholder">Sessions stay flat. Filters below the session list decide source, app, and user; Settings only manages the reusable entities behind them.</div>
       </div>
       <div class="session-list-footer" id="sessionListFooter" title="Build {{BUILD_TITLE}}">Build {{BUILD_LABEL}}</div>
       <button class="new-session-btn secondary" id="newAppBtn">+ New App</button>

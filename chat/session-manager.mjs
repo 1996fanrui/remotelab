@@ -38,7 +38,10 @@ import {
   normalizeSessionGroup,
   resolveInitialSessionName,
 } from './session-naming.mjs';
-import { normalizeSessionWorkflowState } from './session-workflow-state.mjs';
+import {
+  normalizeSessionWorkflowPriority,
+  normalizeSessionWorkflowState,
+} from './session-workflow-state.mjs';
 import {
   createRun,
   findRunByRequest,
@@ -1557,6 +1560,7 @@ function scheduleSessionWorkflowStateSuggestion(session, run) {
     group: session.group || '',
     description: session.description || '',
     workflowState: session.workflowState || '',
+    workflowPriority: session.workflowPriority || '',
     tool: run.tool || session.tool,
     model: run.model || undefined,
     thinking: false,
@@ -1566,8 +1570,12 @@ function scheduleSessionWorkflowStateSuggestion(session, run) {
 
   suggestionDone.then(async (result) => {
     const nextWorkflowState = normalizeSessionWorkflowState(result?.workflowState || '');
-    if (!nextWorkflowState) return;
-    await updateSessionWorkflowState(session.id, nextWorkflowState);
+    const nextWorkflowPriority = normalizeSessionWorkflowPriority(result?.workflowPriority || '');
+    if (!nextWorkflowState && !nextWorkflowPriority) return;
+    await updateSessionWorkflowClassification(session.id, {
+      workflowState: nextWorkflowState,
+      workflowPriority: nextWorkflowPriority,
+    });
   }).catch((error) => {
     console.error(`[workflow-state] Failed to update workflow state for ${session.id?.slice(0, 8)}: ${error.message}`);
   });
@@ -2149,6 +2157,12 @@ export async function createSession(folder, tool, name, extra = {}) {
           changed = true;
         }
 
+        const workflowPriority = normalizeSessionWorkflowPriority(extra.workflowPriority || '');
+        if (workflowPriority && updated.workflowPriority !== workflowPriority) {
+          updated.workflowPriority = workflowPriority;
+          changed = true;
+        }
+
         if (requestedAppName && updated.appName !== requestedAppName) {
           updated.appName = requestedAppName;
           changed = true;
@@ -2214,6 +2228,7 @@ export async function createSession(folder, tool, name, extra = {}) {
     const group = normalizeSessionGroup(extra.group || '');
     const description = normalizeSessionDescription(extra.description || '');
     const workflowState = normalizeSessionWorkflowState(extra.workflowState || '');
+    const workflowPriority = normalizeSessionWorkflowPriority(extra.workflowPriority || '');
     const completionTargets = sanitizeEmailCompletionTargets(extra.completionTargets || []);
 
     const session = {
@@ -2230,6 +2245,7 @@ export async function createSession(folder, tool, name, extra = {}) {
     if (group) session.group = group;
     if (description) session.description = description;
     if (workflowState) session.workflowState = workflowState;
+    if (workflowPriority) session.workflowPriority = workflowPriority;
     if (requestedAppName) session.appName = requestedAppName;
     if (requestedSourceId) session.sourceId = requestedSourceId;
     if (requestedSourceName) session.sourceName = requestedSourceName;
@@ -2378,17 +2394,52 @@ export async function updateSessionGrouping(id, patch = {}) {
 }
 
 export async function updateSessionWorkflowState(id, workflowState) {
+  return updateSessionWorkflowClassification(id, { workflowState });
+}
+
+export async function updateSessionWorkflowPriority(id, workflowPriority) {
+  return updateSessionWorkflowClassification(id, { workflowPriority });
+}
+
+export async function updateSessionWorkflowClassification(id, payload = {}) {
+  const {
+    workflowState,
+    workflowPriority,
+  } = payload;
   const nextWorkflowState = normalizeSessionWorkflowState(workflowState || '');
+  const hasWorkflowState = Object.prototype.hasOwnProperty.call(payload, 'workflowState');
+  const nextWorkflowPriority = normalizeSessionWorkflowPriority(workflowPriority || '');
+  const hasWorkflowPriority = Object.prototype.hasOwnProperty.call(payload, 'workflowPriority');
   const result = await mutateSessionMeta(id, (session) => {
     const currentWorkflowState = normalizeSessionWorkflowState(session.workflowState || '');
-    if (nextWorkflowState) {
-      if (currentWorkflowState === nextWorkflowState) return false;
-      session.workflowState = nextWorkflowState;
-      return true;
+    const currentWorkflowPriority = normalizeSessionWorkflowPriority(session.workflowPriority || '');
+    let changed = false;
+
+    if (hasWorkflowState) {
+      if (nextWorkflowState) {
+        if (currentWorkflowState !== nextWorkflowState) {
+          session.workflowState = nextWorkflowState;
+          changed = true;
+        }
+      } else if (currentWorkflowState) {
+        delete session.workflowState;
+        changed = true;
+      }
     }
-    if (!currentWorkflowState) return false;
-    delete session.workflowState;
-    return true;
+
+    if (hasWorkflowPriority) {
+      if (nextWorkflowPriority) {
+        if (currentWorkflowPriority !== nextWorkflowPriority) {
+          session.workflowPriority = nextWorkflowPriority;
+          changed = true;
+        }
+      } else if (currentWorkflowPriority) {
+        delete session.workflowPriority;
+        changed = true;
+      }
+    }
+
+    return changed;
   });
 
   if (!result.meta) return null;

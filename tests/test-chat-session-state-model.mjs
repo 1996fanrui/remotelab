@@ -121,6 +121,26 @@ const doneBoardColumn = model.getSessionBoardColumn(
 );
 assert.equal(doneBoardColumn.key, 'done');
 
+assert.equal(model.normalizeSessionWorkflowPriority('P1'), 'high');
+assert.equal(model.normalizeSessionWorkflowPriority('normal'), 'medium');
+assert.equal(model.normalizeSessionWorkflowPriority('later'), 'low');
+
+const explicitHighPriority = model.getSessionBoardPriority(
+  makeSession({ workflowPriority: 'urgent' }),
+);
+assert.equal(explicitHighPriority.key, 'high');
+assert.equal(explicitHighPriority.rank, 3);
+
+const waitingFallbackPriority = model.getSessionBoardPriority(
+  makeSession({ workflowState: 'waiting_user' }),
+);
+assert.equal(waitingFallbackPriority.key, 'high', 'waiting sessions should default to high attention');
+
+const doneFallbackPriority = model.getSessionBoardPriority(
+  makeSession({ workflowState: 'done' }),
+);
+assert.equal(doneFallbackPriority.key, 'low', 'done sessions should default to low attention');
+
 const runningBoardColumn = model.getSessionBoardColumn(
   makeSession({
     workflowState: 'done',
@@ -130,6 +150,22 @@ const runningBoardColumn = model.getSessionBoardColumn(
   }),
 );
 assert.equal(runningBoardColumn.key, 'running', 'live runtime should override stored workflow state in the board');
+
+assert.ok(
+  model.compareBoardSessions(
+    makeSession({ workflowPriority: 'high', updatedAt: '2026-03-14T12:00:00.000Z' }),
+    makeSession({ workflowPriority: 'low', updatedAt: '2026-03-14T13:00:00.000Z' }),
+  ) < 0,
+  'higher-priority sessions should sort before lower-priority ones even when they are older',
+);
+
+assert.ok(
+  model.compareBoardSessions(
+    makeSession({ workflowPriority: 'medium', pinned: true, updatedAt: '2026-03-14T12:00:00.000Z' }),
+    makeSession({ workflowPriority: 'medium', updatedAt: '2026-03-14T13:00:00.000Z' }),
+  ) < 0,
+  'pinned sessions should break ties inside a board column',
+);
 
 const toolFallbackStatus = model.getSessionStatusSummary(
   makeSession({ tool: 'codex' }),

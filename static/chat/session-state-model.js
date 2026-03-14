@@ -28,6 +28,30 @@
     },
   ];
 
+  const workflowPrioritySpecs = {
+    high: {
+      key: "high",
+      label: "High",
+      rank: 3,
+      className: "board-priority-high",
+      title: "Needs user attention soon.",
+    },
+    medium: {
+      key: "medium",
+      label: "Medium",
+      rank: 2,
+      className: "board-priority-medium",
+      title: "Worth checking soon, but not urgent.",
+    },
+    low: {
+      key: "low",
+      label: "Low",
+      rank: 1,
+      className: "board-priority-low",
+      title: "Safe to leave for later.",
+    },
+  };
+
   function createEmptyStatus() {
     return {
       key: "idle",
@@ -65,6 +89,35 @@
       return "parked";
     }
     return "";
+  }
+
+  function normalizeSessionWorkflowPriority(value) {
+    const normalized = typeof value === "string"
+      ? value.trim().toLowerCase().replace(/[\s-]+/g, "_")
+      : "";
+    if (!normalized) return "";
+    if (["high", "urgent", "asap", "important", "critical", "top", "top_priority", "p1"].includes(normalized)) {
+      return "high";
+    }
+    if (["medium", "normal", "default", "standard", "soon", "next", "p2"].includes(normalized)) {
+      return "medium";
+    }
+    if (["low", "later", "backlog", "deferred", "eventually", "p3"].includes(normalized)) {
+      return "low";
+    }
+    return "";
+  }
+
+  function getWorkflowPriorityInfo(value) {
+    const normalized = normalizeSessionWorkflowPriority(value);
+    if (!normalized || !workflowPrioritySpecs[normalized]) return null;
+    return { ...workflowPrioritySpecs[normalized] };
+  }
+
+  function getSessionSortTime(session) {
+    const stamp = session?.lastEventAt || session?.updatedAt || session?.created || "";
+    const time = new Date(stamp).getTime();
+    return Number.isFinite(time) ? time : 0;
   }
 
   function normalizeSessionActivity(session) {
@@ -199,8 +252,33 @@
     return boardColumns[0];
   }
 
+  function getSessionBoardPriority(session) {
+    const explicitPriority = getWorkflowPriorityInfo(session?.workflowPriority);
+    if (explicitPriority) return explicitPriority;
+
+    const boardColumn = getSessionBoardColumn(session);
+    if (boardColumn.key === "waiting_user") {
+      return getWorkflowPriorityInfo("high");
+    }
+    if (boardColumn.key === "done") {
+      return getWorkflowPriorityInfo("low");
+    }
+    return getWorkflowPriorityInfo("medium");
+  }
+
+  function compareBoardSessions(a, b) {
+    const priorityDiff = (getSessionBoardPriority(b)?.rank || 0) - (getSessionBoardPriority(a)?.rank || 0);
+    if (priorityDiff) return priorityDiff;
+
+    const pinDiff = (b?.pinned === true ? 1 : 0) - (a?.pinned === true ? 1 : 0);
+    if (pinDiff) return pinDiff;
+
+    return getSessionSortTime(b) - getSessionSortTime(a);
+  }
+
   root.RemoteLabSessionStateModel = {
     createEmptyStatus,
+    normalizeSessionWorkflowPriority,
     normalizeSessionWorkflowState,
     normalizeSessionActivity,
     isSessionBusy,
@@ -209,5 +287,7 @@
     getSessionVisualStatus,
     getBoardColumns,
     getSessionBoardColumn,
+    getSessionBoardPriority,
+    compareBoardSessions,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);

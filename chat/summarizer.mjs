@@ -11,7 +11,9 @@ import {
 } from './session-naming.mjs';
 import { loadSessionLabelPromptContext } from './session-label-context.mjs';
 import {
+  inferSessionWorkflowPriorityFromText,
   inferSessionWorkflowStateFromText,
+  normalizeSessionWorkflowPriority,
   normalizeSessionWorkflowState,
 } from './session-workflow-state.mjs';
 
@@ -291,6 +293,7 @@ async function runSessionWorkflowStateSuggestion(sessionMeta, _options = {}) {
     group,
     description,
     workflowState,
+    workflowPriority,
     runState,
     queuedCount,
   } = sessionMeta;
@@ -316,6 +319,7 @@ async function runSessionWorkflowStateSuggestion(sessionMeta, _options = {}) {
   const currentGroup = normalizeSessionGroup(group || '');
   const currentDescription = normalizeSessionDescription(description || '');
   const currentWorkflowState = normalizeSessionWorkflowState(workflowState || '');
+  const currentWorkflowPriority = normalizeSessionWorkflowPriority(workflowPriority || '');
 
   const prompt = [
     'You are updating RemoteLab workflow state for a developer session.',
@@ -330,12 +334,17 @@ async function runSessionWorkflowStateSuggestion(sessionMeta, _options = {}) {
     '- If the assistant delivered the requested result or clearly closed the task, prefer "done".',
     '- If the session is paused, open-ended, or only loosely pending without needing the user right now, choose "parked".',
     '- On failures that require user intervention, prefer "waiting_user". On failures that simply stop progress without a clear ask, prefer "parked".',
+    '- Also choose the user-attention priority for the next glance at the board.',
+    '- Use "high" when the user should probably look soon, especially for blockers, approvals, decisions, or important next actions.',
+    '- Use "medium" for meaningful open work that matters but is not urgent right now.',
+    '- Use "low" for safely parked or completed work that does not deserve immediate attention.',
     '',
     `Session folder: ${folder}`,
     `Current session name: ${name || '(unnamed)'}`,
     currentGroup ? `Current display group: ${currentGroup}` : '',
     currentDescription ? `Current session description: ${currentDescription}` : '',
     currentWorkflowState ? `Current workflow state: ${currentWorkflowState}` : '',
+    currentWorkflowPriority ? `Current workflow priority: ${currentWorkflowPriority}` : '',
     typeof runState === 'string' && runState ? `Latest run state: ${runState}` : '',
     Number.isInteger(queuedCount) ? `Queued follow-ups after this turn: ${queuedCount}` : '',
     '',
@@ -344,6 +353,7 @@ async function runSessionWorkflowStateSuggestion(sessionMeta, _options = {}) {
     '',
     'Write a JSON object with exactly these fields:',
     '- "workflowState": one of "parked", "waiting_user", or "done".',
+    '- "workflowPriority": one of "high", "medium", or "low".',
     '- "reason": one short sentence explaining the choice.',
     '',
     'Respond with ONLY valid JSON. No markdown, no explanation.',
@@ -356,6 +366,12 @@ async function runSessionWorkflowStateSuggestion(sessionMeta, _options = {}) {
     || stateResult?.reason
     || modelText,
   );
+  const nextWorkflowPriority = inferSessionWorkflowPriorityFromText(
+    stateResult?.workflowPriority
+    || stateResult?.reason
+    || modelText,
+    nextWorkflowState,
+  );
   if (!nextWorkflowState) {
     console.error(`[workflow-state] Unexpected workflow output for ${sessionId.slice(0, 8)}: ${modelText.slice(0, 200)}`);
     return {
@@ -367,6 +383,7 @@ async function runSessionWorkflowStateSuggestion(sessionMeta, _options = {}) {
   return {
     ok: true,
     workflowState: nextWorkflowState,
+    workflowPriority: nextWorkflowPriority,
     reason: typeof stateResult?.reason === 'string' ? stateResult.reason.trim() : '',
   };
 }
