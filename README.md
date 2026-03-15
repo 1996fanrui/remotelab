@@ -176,6 +176,7 @@ remotelab --help               Show help
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CHAT_PORT` | `7690` | Chat server port |
+| `CHAT_BIND_HOST` | `127.0.0.1` | Host to bind the chat server (`127.0.0.1` for local only, `0.0.0.0` for LAN access) |
 | `SESSION_EXPIRY` | `86400000` | Cookie lifetime in ms (24h) |
 | `SECURE_COOKIES` | `1` | Set `0` only for local HTTP debugging |
 | `REMOTELAB_LIVE_CONTEXT_COMPACT_TOKENS` | `window overflow` | Optional auto-compact override in live-context tokens; unset = compact only after live context exceeds 100% of a known context window, `Inf` = disable |
@@ -213,7 +214,7 @@ remotelab --help               Show help
 - optional scrypt-hashed password login
 - `HttpOnly` + `Secure` + `SameSite=Strict` auth cookies
 - per-IP rate limiting with exponential backoff on failed login
-- services bind to `127.0.0.1` only — no direct external exposure
+- default: services bind to `127.0.0.1` only — no direct external exposure; set `CHAT_BIND_HOST=0.0.0.0` for LAN access
 - share snapshots are read-only and isolated from the owner chat surface
 - CSP headers with nonce-based script allowlist
 

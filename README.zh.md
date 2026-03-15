@@ -177,6 +177,7 @@ remotelab --help               显示帮助
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `CHAT_PORT` | `7690` | Chat server 端口 |
+| `CHAT_BIND_HOST` | `127.0.0.1` | Chat server 监听地址（`127.0.0.1` 仅本机访问，`0.0.0.0` 允许局域网访问） |
 | `SESSION_EXPIRY` | `86400000` | Cookie 有效期（毫秒，24h） |
 | `SECURE_COOKIES` | `1` | 只有本地 HTTP 调试时才设为 `0` |
 
@@ -204,7 +205,7 @@ remotelab --help               显示帮助
 - 可选 scrypt 哈希密码登录
 - `HttpOnly` + `Secure` + `SameSite=Strict` 的认证 cookie
 - 登录失败按 IP 限流，并做指数退避
-- 服务只绑定 `127.0.0.1`，不直接暴露到公网
+- 默认服务只绑定 `127.0.0.1`，不直接暴露到公网；如需局域网访问，设置 `CHAT_BIND_HOST=0.0.0.0`
 - 分享快照是只读的，并与 owner 聊天面隔离
 - CSP 头使用基于 nonce 的脚本白名单
 
